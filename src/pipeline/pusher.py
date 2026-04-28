@@ -1,0 +1,96 @@
+"""Push validated models to GCS with strict artifact conventions."""
+
+from __future__ import annotations
+
+import json
+import logging
+import tempfile
+from datetime import datetime, UTC
+from pathlib import Path
+import tensorflow as tf
+import keras
+import uuid
+import zipfile
+from src.settings import Settings
+from src.models_architecture.base_model import BaseModel
+from src.storage.utils import getStorageClient
+
+LOGGER = logging.getLogger(__name__)
+
+
+class ModelPusher:
+    """Persists models and metadata under required GCS path conventions."""
+
+    def __init__(self, config: Settings) -> None:
+        self.config = config
+        self.storage_client = getStorageClient(config.s3_storage_option)(self.config)
+        self.storage_bucket = config.models_bucket
+
+    def push(
+        self,
+        *,
+        model: BaseModel,
+        symbol: str,
+        model_type: str,
+        metrics: dict[str, float],
+        sequence_length: int,
+        data_range: dict[str, str],
+        benchmark_passed: bool,
+    ) -> str:
+        """Save tf.saved_model and metadata, then upload to target GCS path."""
+        trained_at = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        unique_identifier = uuid.uuid4()
+        model_object_key = f"prediction-models/{unique_identifier}/model.zip"
+        props_object_key = f"prediction-models/{unique_identifier}/properties.json"
+
+        with tempfile.TemporaryDirectory(prefix="fg_push_") as temp_dir:
+            local_root = Path(temp_dir)
+            model_dir = local_root / "saved_model"
+
+            # Save SavedModel to disk
+            tf.saved_model.save(
+                model.model,
+                str(model_dir),
+                signatures={"serving_default": model.get_serving_signature()}
+            )
+
+            # Zip the saved_model directory
+            zip_path = local_root / "model.zip"
+            with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for file in model_dir.rglob("*"):
+                    if file.is_file():
+                        zf.write(file, arcname=file.relative_to(model_dir))
+
+            metadata = {
+                "symbol": symbol.upper(),
+                "model_type": model_type.lower(),
+                "sequence_length": int(sequence_length),
+                "trained_at": trained_at,
+                "metrics": {
+                    "precision_buy": float(metrics.get("precision_buy", 0.0)),
+                    "recall_buy": float(metrics.get("recall_buy", 0.0)),
+                    "precision_sell": float(metrics.get("precision_sell", 0.0)),
+                    "recall_sell": float(metrics.get("recall_sell", 0.0)),
+                    "val_loss": float(metrics.get("val_loss", 0.0)),
+                    "train_loss": float(metrics.get("train_loss", 0.0)),
+                },
+                "data_range": data_range,
+                "benchmark_passed": bool(benchmark_passed),
+            }
+            metadata_path = local_root / "metadata.json"
+            metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+            self.storage_client.upload_file(
+                file_directory=str(zip_path),
+                bucket=self.storage_bucket,
+                object_key=model_object_key,
+            )
+            self.storage_client.upload_file(
+                file_directory=str(metadata_path),
+                bucket=self.storage_bucket,
+                object_key=props_object_key,
+            )
+
+        LOGGER.info("Model pushed to %s", model_object_key)
+        return unique_identifier
+

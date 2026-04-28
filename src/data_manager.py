@@ -8,14 +8,9 @@ from typing import Any, Optional
 import pandas as pd
 
 from src.settings import Settings
-from src.storage.clients import (
-    AWSStorageClient,
-    CloudflareR2StorageClient,
-    GoogleS3StorageClient,
-    MinIOStorageClient,
-)
-from src.storage.utils import StorageOptionEnumeration
-
+from src.storage.utils import getStorageClient, StorageOptionEnumeration
+from src.storage.base_client import BaseStorageClient
+from src.schemas import SymbolProperties
 
 class DataManager:
     REQUIRED_COLUMNS = {
@@ -29,35 +24,19 @@ class DataManager:
         "spread",
     }
 
-    STORAGE_CLIENTS = {
-        StorageOptionEnumeration.AWS.value: AWSStorageClient,
-        StorageOptionEnumeration.CLOUDFLARE_R2.value: CloudflareR2StorageClient,
-        StorageOptionEnumeration.MINIO.value: MinIOStorageClient,
-        StorageOptionEnumeration.GOOGLE_S3.value: GoogleS3StorageClient,
-    }
-
     def __init__(
         self,
-        storage_client: Optional[
-            AWSStorageClient
-            | CloudflareR2StorageClient
-            | GoogleS3StorageClient
-            | MinIOStorageClient
-        ] = None,
-        *,
-        settings: Optional[Settings] = None,
-        data_source: Optional[str] = None,
         base_bucket_name: Optional[str] = None,
     ) -> None:
-        self.settings = settings or Settings()
-        self.data_source = (data_source or self.settings.data_source or "").strip().lower()
+        self.settings = Settings()
+        self.data_source = (self.settings.data_source or "").strip().lower()
         if not self.data_source:
-            raise ValueError("A data source is required to initialize the data manager.")
-
+            raise ValueError("No data source found in environment variables.")
+        
         self.data_directory = Path(self.settings.data_directory).expanduser().resolve()
-        self.storage_client = storage_client or self._build_storage_client()
+        self.storage_client:BaseStorageClient = self._build_storage_client()
         self.base_bucket_name = (
-            (base_bucket_name or self.storage_client.bucket_name or "").strip()
+            (base_bucket_name or "").strip()
             or self.settings.s3_bucket_name
         )
         self.storage_client.bucket_name = self.base_bucket_name
@@ -76,21 +55,31 @@ class DataManager:
         if self.settings.force_reload or not self._local_files_exist(parquet_path, properties_path):
             dataframe, properties = self._download_and_cache(group_name, pair_name, parquet_path, properties_path)
         else:
-            dataframe, properties = self._load_local_files(parquet_path, properties_path)
+            try:
+                dataframe, properties = self._load_local_files(parquet_path, properties_path)
+                self._validate_properties(properties, pair_name)
+                self._validate_dataframe(dataframe, pair_name)
+            except (OSError, ValueError, json.JSONDecodeError):
+                dataframe, properties = self._download_and_cache(
+                    group_name,
+                    pair_name,
+                    parquet_path,
+                    properties_path,
+                )
 
         self._validate_properties(properties, pair_name)
         self._validate_dataframe(dataframe, pair_name)
-        return dataframe, properties
+        return dataframe, SymbolProperties.model_validate(properties)
 
     def _build_storage_client(self):
-        storage_option = (self.settings.s3_storage_option or "").strip().lower()
-        client_class = self.STORAGE_CLIENTS.get(storage_option)
+        storage_option = (self.settings.s3_storage_option or "").strip().lower() or "minio"
+        client_class = getStorageClient(self.settings.s3_storage_option)
         if client_class is None:
             supported = ", ".join(option.value for option in StorageOptionEnumeration)
             raise ValueError(
                 f"Unsupported storage option '{storage_option}'. Supported options: {supported}."
             )
-        return client_class(settings=self.settings)
+        return client_class
 
     def _download_and_cache(
         self,
@@ -100,8 +89,13 @@ class DataManager:
         properties_path: Path,
     ) -> tuple[pd.DataFrame, dict[str, Any]]:
         bucket_directory = self._build_bucket_directory(instrument_group, pair_name)
+        resolved_bucket_name = (
+            (self.base_bucket_name or self.storage_client.bucket_name or "").strip()
+            or self.settings.s3_bucket_name
+        )
         parquet_buffer, properties = self.storage_client.download_data_files(
             bucket_directory,
+            bucket_name=resolved_bucket_name,
             parquet_filename=f"{pair_name}_M1.parquet",
             json_filename="properties.json",
         )
@@ -129,8 +123,9 @@ class DataManager:
         parquet_path: Path,
         properties_path: Path,
     ) -> None:
+        normalized_dataframe = self._normalize_dataframe(dataframe)
         parquet_path.parent.mkdir(parents=True, exist_ok=True)
-        dataframe.to_parquet(parquet_path, index=False)
+        normalized_dataframe.to_parquet(parquet_path, index=False)
         with properties_path.open("w", encoding="utf-8") as file_handle:
             json.dump(properties, file_handle, indent=2)
 
@@ -138,7 +133,7 @@ class DataManager:
         return f"{self.data_source}/{instrument_group}/{pair_name}"
 
     def _build_local_directory(self, instrument_group: str, pair_name: str) -> Path:
-        return self.data_directory / self.data_source / instrument_group / pair_name
+        return self.data_directory / self.base_bucket_name / self.data_source / instrument_group / pair_name
 
     @staticmethod
     def _local_files_exist(parquet_path: Path, properties_path: Path) -> bool:
@@ -150,8 +145,14 @@ class DataManager:
         return pd.read_parquet(parquet_buffer)
 
     @classmethod
+    def _normalize_dataframe(cls, dataframe: pd.DataFrame) -> pd.DataFrame:
+        if "time" not in dataframe.columns and dataframe.index.name == "time":
+            return dataframe.reset_index()
+        return dataframe.copy()
+
+    @classmethod
     def _validate_dataframe(cls, dataframe: pd.DataFrame, pair_name: str) -> None:
-        normalized = dataframe.reset_index() if "time" not in dataframe.columns and dataframe.index.name == "time" else dataframe
+        normalized = cls._normalize_dataframe(dataframe)
         missing_columns = cls.REQUIRED_COLUMNS - set(normalized.columns)
         if missing_columns:
             missing_list = ", ".join(sorted(missing_columns))

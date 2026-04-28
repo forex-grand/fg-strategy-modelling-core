@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
-
+from typing import Optional
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 
 from src.data_manager import DataManager
 from src.settings import Settings
-
+from src.schemas import TARGET_MODEL_TYPES, TimeBasedTarget, PointsBasedTarget, SymbolProperties
 
 class GenerateTrainData:
     """Generate versioned TensorFlow training and evaluation TFRecords."""
@@ -37,54 +36,38 @@ class GenerateTrainData:
 
     def __init__(
         self,
-        data_manager: DataManager | type[DataManager],
-        *,
-        data_manager_kwargs: Optional[dict] = None,
-        settings: Optional[Settings] = None,
-        sequence_length: int,
-        timeframe: str = "1m",
-        stride: int = 1,
-        indicators: Optional[Sequence[dict[str, Any]]] = None,
         train_base_bucket: str = "forexgrand-train",
         eval_base_bucket: str = "forexgrand-eval",
     ) -> None:
-        if sequence_length <= 0:
-            raise ValueError("sequence_length must be greater than zero.")
-        if stride <= 0:
-            raise ValueError("stride must be greater than zero.")
-
-        self.settings = settings or Settings()
-        self.sequence_length = sequence_length
-        self.timeframe = self._normalize_timeframe(timeframe)
-        self.stride = stride
-        self.indicator_specs = self._normalize_indicator_specs(indicators or [])
-        self.feature_columns = self.BASE_FEATURE_COLUMNS + tuple(
-            column_name
-            for spec in self.indicator_specs
-            for column_name in spec["column_names"]
-        )
+        self.settings = Settings()
+        self.feature_columns = self.BASE_FEATURE_COLUMNS
         self.train_base_bucket = train_base_bucket.strip() or "forexgrand-train"
         self.eval_base_bucket = eval_base_bucket.strip() or "forexgrand-eval"
-        manager_kwargs = data_manager_kwargs or {}
-        self.train_data_manager = self._build_data_manager(
-            data_manager=data_manager,
-            data_manager_kwargs=manager_kwargs,
-            base_bucket_name=self.train_base_bucket,
-        )
-        self.eval_data_manager = self._build_data_manager(
-            data_manager=data_manager,
-            data_manager_kwargs=manager_kwargs,
-            base_bucket_name=self.eval_base_bucket,
-        )
+        if not self.train_base_bucket or not self.eval_base_bucket:
+            raise ValueError("Both train bucket and eval bucket name is required.")
+
+        self.train_data_manager:DataManager = self._build_data_manager(base_bucket_name=self.train_base_bucket)
+        self.eval_data_manager:DataManager = self._build_data_manager(base_bucket_name=self.eval_base_bucket)
         self.data_directory = Path(self.settings.data_directory).expanduser().resolve()
+        self.stride = None
+        self.sequence_length = None
+        self.target_model:TARGET_MODEL_TYPES = None
+        self.train_properties: SymbolProperties = None
+        self.eval_properties: SymbolProperties  = None
 
     def load_data(
         self,
         symbol_pair: str,
         instrument_group: str,
-        *,
+        sequence_length: int,
+        stride: int,
         hot_reload: bool = False,
+        target_model: TARGET_MODEL_TYPES = None
     ) -> tuple[Path, Path]:
+        self.sequence_length = sequence_length
+        self.stride = stride
+        self.target_model = target_model
+
         pair_name = symbol_pair.strip().upper()
         group_name = instrument_group.strip().lower()
         if not pair_name:
@@ -92,8 +75,8 @@ class GenerateTrainData:
         if not group_name:
             raise ValueError("instrument_group is required.")
 
-        train_raw_frame, _ = self.train_data_manager.load_data(pair_name, group_name)
-        eval_raw_frame, _ = self.eval_data_manager.load_data(pair_name, group_name)
+        train_raw_frame, self.train_properties = self.train_data_manager.load_data(pair_name, group_name)
+        eval_raw_frame, self.eval_properties = self.eval_data_manager.load_data(pair_name, group_name)
         train_frame = self._prepare_feature_frame(train_raw_frame)
         eval_frame = self._prepare_feature_frame(eval_raw_frame)
         metadata = self._build_metadata(
@@ -148,7 +131,7 @@ class GenerateTrainData:
         *,
         output_path: Path,
     ) -> Path:
-        self._write_examples(dataframe, output_path=output_path)
+        self._write_examples(dataframe, output_path=output_path, symbol_properties=self.train_properties)
         return output_path
 
     def generate_eval_data_examples(
@@ -157,38 +140,22 @@ class GenerateTrainData:
         *,
         output_path: Path,
     ) -> Path:
-        self._write_examples(dataframe, output_path=output_path)
+        self._write_examples(dataframe, output_path=output_path, symbol_properties=self.eval_properties)
         return output_path
 
     def _build_data_manager(
         self,
-        *,
-        data_manager: DataManager | type[DataManager],
-        data_manager_kwargs: dict,
         base_bucket_name: str,
     ) -> DataManager:
-        if isinstance(data_manager, DataManager):
-            manager_class = type(data_manager)
-            return manager_class(
-                settings=data_manager.settings,
-                data_source=data_manager.data_source,
-                base_bucket_name=base_bucket_name,
-            )
-        if isinstance(data_manager, type) and issubclass(data_manager, DataManager):
-            manager_kwargs = dict(data_manager_kwargs)
-            manager_kwargs["base_bucket_name"] = base_bucket_name
-            return data_manager(**manager_kwargs)
-        raise TypeError("data_manager must be a DataManager instance or DataManager subclass.")
+        return DataManager(base_bucket_name=base_bucket_name)
 
     def _prepare_feature_frame(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         normalized_frame = self._prepare_dataframe(dataframe)
-        timeframe_frame = self._apply_timeframe(normalized_frame)
-        feature_frame = self._apply_indicators(normalized_frame, timeframe_frame)
-        if len(feature_frame) < self.sequence_length:
+        if len(normalized_frame) < self.sequence_length:
             raise ValueError(
                 f"At least {self.sequence_length} rows are required to create sequences."
             )
-        return feature_frame
+        return normalized_frame
 
     def _prepare_dataframe(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         normalized = (
@@ -202,66 +169,13 @@ class GenerateTrainData:
             missing_list = ", ".join(sorted(missing_columns))
             raise ValueError(f"Dataframe is missing required columns: {missing_list}.")
 
-        normalized["time"] = pd.to_datetime(normalized["time"], utc=True, errors="coerce")
+        normalized["time"] = pd.to_datetime(normalized["time"], errors="coerce")
         if normalized["time"].isna().any():
             raise ValueError("The 'time' column contains invalid datetime values.")
 
         normalized = normalized.sort_values("time").drop_duplicates(subset="time", keep="last")
         normalized = normalized.reset_index(drop=True)
         return normalized[["time", *self.BASE_FEATURE_COLUMNS]]
-
-    def _apply_timeframe(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        if self.timeframe == "1m":
-            return dataframe.reset_index(drop=True)
-
-        resample_rule = self.TIMEFRAME_ALIASES[self.timeframe]
-        indexed = dataframe.set_index("time")
-        resampled = indexed.resample(resample_rule).agg(
-            {
-                "open": "first",
-                "close": "last",
-                "high": "max",
-                "low": "min",
-                "real_volume": "sum",
-                "spread": "last",
-                "tick_volume": "sum",
-            }
-        )
-        resampled = resampled.dropna(subset=["open", "close", "high", "low", "spread"])
-        return resampled.reset_index()
-
-    def _apply_indicators(
-        self,
-        base_frame: pd.DataFrame,
-        main_timeframe_frame: pd.DataFrame,
-    ) -> pd.DataFrame:
-        feature_frame = main_timeframe_frame.copy()
-        if not self.indicator_specs:
-            return feature_frame[["time", *self.feature_columns]]
-
-        for spec in self.indicator_specs:
-            indicator_frame = self._apply_timeframe_for_value(base_frame, spec["timeframe"])
-            indicator_values = spec["function"](indicator_frame.copy(), **spec["kwargs"])
-            normalized_indicator = self._normalize_indicator_output(
-                indicator_values,
-                indicator_frame.index,
-                spec["column_names"],
-                spec["buffers"],
-            )
-            aligned_frame = self._align_indicator_to_main_timeframe(
-                indicator_frame[["time"]].reset_index(drop=True),
-                normalized_indicator,
-                main_timeframe_frame[["time"]],
-                allow_exact_matches=spec["timeframe"] == self.timeframe,
-            )
-            feature_frame = feature_frame.merge(aligned_frame, on="time", how="left")
-
-        feature_frame = feature_frame.dropna(subset=self.feature_columns).reset_index(drop=True)
-        if len(feature_frame) < self.sequence_length:
-            raise ValueError(
-                "Indicator warmup removed too many rows to build sequences."
-            )
-        return feature_frame[["time", *self.feature_columns]]
 
     def _build_output_path(
         self,
@@ -278,23 +192,32 @@ class GenerateTrainData:
             / self.train_data_manager.data_source
             / instrument_group
             / symbol_pair
-            / self.timeframe
             / str(self.sequence_length)
             / str(version_number)
             / filename
         )
 
-    def _write_examples(self, dataframe: pd.DataFrame, *, output_path: Path) -> None:
+    def _write_examples(self, dataframe: pd.DataFrame, symbol_properties: SymbolProperties, *, output_path: Path) -> None:
         sequence_data = self._build_sequence_data(dataframe)
+        
+        target_data, _counts = {}, None
+        if self.target_model:
+            target_data, _counts = self._build_target_data(dataframe=dataframe, symbol_properties=symbol_properties)
+        target_counts = min(sequence_data["num_examples"], _counts) if _counts else sequence_data["num_examples"]
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         options = tf.io.TFRecordOptions(compression_type="GZIP")
+        print("Examples: ",sequence_data["num_examples"]," Targets: ",target_counts)
 
         with tf.io.TFRecordWriter(str(output_path), options=options) as writer:
-            for index in range(sequence_data["num_examples"]):
+            for index in range(target_counts):
                 example = self._build_tf_example({
                     column_name: values[index]
                     for column_name, values in sequence_data.items()
                     if column_name != "num_examples"
+                } | {
+                    column_name: values[index]
+                    for column_name, values in target_data.items()
                 })
                 writer.write(example.SerializeToString())
 
@@ -303,9 +226,11 @@ class GenerateTrainData:
             raise ValueError(
                 f"At least {self.sequence_length} rows are required to create sequences."
             )
-
+        
         time_values = (
-            dataframe["time"].astype("int64").to_numpy(copy=False) // 10**9
+            dataframe["time"].astype("datetime64[s]")  # convert directly to second precision
+            .astype("int64")
+            .to_numpy(copy=False)
         ).astype(np.int64, copy=False)
         sequence_data: dict[str, np.ndarray | int] = {
             "time": self._window_array(time_values, dtype=np.int64),
@@ -315,13 +240,44 @@ class GenerateTrainData:
             sequence_data[column] = self._window_array(values, dtype=np.float32)
 
         sequence_data["num_examples"] = int(sequence_data["time"].shape[0])
+
         return sequence_data
+
+    def _calculate_points_diff(self, price_arr1, price_arr2, points_size)->np.ndarray:
+        return (price_arr1 - price_arr2)//points_size
+    
+    def _build_target_data(self, dataframe: pd.DataFrame, symbol_properties: SymbolProperties):
+        if isinstance(self.target_model, TimeBasedTarget):
+            target_sequences = {}
+            required_cols = ['high','low','close']
+            target_seq_length = self.target_model.stop_minutes
+            for col in required_cols:
+                vals = np.lib.stride_tricks.sliding_window_view(
+                    dataframe[col].to_numpy(), target_seq_length)
+                target_sequences[col] = vals[self.sequence_length::self.stride]
+
+            pos_prices = np.lib.stride_tricks.sliding_window_view(
+                    dataframe['close'].to_numpy(), target_seq_length)
+            pos_prices = pos_prices[self.sequence_length-1:-1, 0]
+            pos_prices = pos_prices[::self.stride]
+            points = symbol_properties.point_size
+            target_cols = {
+                'target_highest':np.expand_dims(self._calculate_points_diff(np.max(target_sequences['high'], axis=-1),
+                                                             pos_prices, points).astype("float32"), axis=-1),
+                'target_lowest':np.expand_dims(self._calculate_points_diff(pos_prices, np.min(target_sequences['low'], axis=-1), points).astype("float32"), axis=-1),
+                'target_value':np.expand_dims(self._calculate_points_diff(pos_prices, target_sequences['close'][:,-1], points).astype("float32"), axis=-1),
+            }
+            print("target_highest shape: ",target_cols['target_highest'].shape)
+            return target_cols, pos_prices.shape[0]
+        elif isinstance(self.target_model, PointsBasedTarget):
+            raise NotImplemented("mode not implemented: use TimeBasedTarget.")
 
     def _window_array(self, values: np.ndarray, *, dtype: type[np.generic]) -> np.ndarray:
         windows = np.lib.stride_tricks.sliding_window_view(values, self.sequence_length)
         if self.stride > 1:
             windows = windows[:: self.stride]
         return np.ascontiguousarray(windows, dtype=dtype)
+
 
     def _build_tf_example(self, sequence_features: dict[str, np.ndarray]) -> tf.train.Example:
         features: dict[str, tf.train.Feature] = {}
@@ -350,11 +306,9 @@ class GenerateTrainData:
             "data_source": self.train_data_manager.data_source,
             "instrument_group": instrument_group,
             "symbol_pair": symbol_pair,
-            "timeframe": self.timeframe,
             "sequence_length": self.sequence_length,
             "stride": self.stride,
             "feature_columns": list(self.feature_columns),
-            "indicator_specs": self._metadata_indicator_specs(),
             "train_row_count": int(len(train_frame)),
             "train_example_count": train_examples,
             "train_start_time": self._isoformat(train_frame["time"].iloc[0]),
@@ -446,7 +400,6 @@ class GenerateTrainData:
             / self.train_data_manager.data_source
             / instrument_group
             / symbol_pair
-            / self.timeframe
             / str(self.sequence_length)
         )
 
@@ -498,140 +451,6 @@ class GenerateTrainData:
 
     def _count_examples(self, dataframe: pd.DataFrame) -> int:
         return max(0, ((len(dataframe) - self.sequence_length) // self.stride) + 1)
-
-    def _normalize_indicator_specs(
-        self,
-        indicators: Sequence[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        normalized_specs: list[dict[str, Any]] = []
-        seen_column_names: set[str] = set()
-        seen_indicator_names: set[str] = set()
-        main_minutes = self._timeframe_to_minutes(self.timeframe)
-
-        for raw_spec in indicators:
-            function = raw_spec.get("function")
-            if not callable(function):
-                raise ValueError("Each indicator spec must include a callable 'function'.")
-
-            name = str(raw_spec.get("name", "")).strip().lower()
-            if not name:
-                raise ValueError("Each indicator spec must include a non-empty 'name'.")
-            if name in seen_indicator_names:
-                raise ValueError(f"Duplicate indicator name detected: {name}.")
-            seen_indicator_names.add(name)
-
-            indicator_timeframe = self._normalize_timeframe(str(raw_spec.get("timeframe", "")))
-            if self._timeframe_to_minutes(indicator_timeframe) < main_minutes:
-                raise ValueError(
-                    f"Indicator timeframe '{indicator_timeframe}' cannot be lower than main timeframe '{self.timeframe}'."
-                )
-
-            buffers = raw_spec.get("buffers")
-            if not isinstance(buffers, Sequence) or isinstance(buffers, (str, bytes)) or len(buffers) == 0:
-                raise ValueError("Each indicator spec must include a non-empty 'buffers' list.")
-
-            normalized_buffers = [int(buffer_index) for buffer_index in buffers]
-            kwargs = dict(raw_spec.get("kwargs") or {})
-            column_names = tuple(
-                f"{name}_{indicator_timeframe}_{buffer_index}" for buffer_index in normalized_buffers
-            )
-            duplicate_names = seen_column_names.intersection(column_names)
-            if duplicate_names:
-                duplicates = ", ".join(sorted(duplicate_names))
-                raise ValueError(f"Duplicate indicator column names detected: {duplicates}.")
-            seen_column_names.update(column_names)
-
-            normalized_specs.append(
-                {
-                    "function": function,
-                    "function_name": getattr(function, "__name__", function.__class__.__name__),
-                    "name": name,
-                    "timeframe": indicator_timeframe,
-                    "buffers": normalized_buffers,
-                    "kwargs": kwargs,
-                    "column_names": column_names,
-                }
-            )
-        return normalized_specs
-
-    def _apply_timeframe_for_value(self, dataframe: pd.DataFrame, timeframe: str) -> pd.DataFrame:
-        if timeframe == self.timeframe:
-            return self._apply_timeframe(dataframe)
-        if timeframe == "1m":
-            return dataframe.reset_index(drop=True)
-
-        resample_rule = self.TIMEFRAME_ALIASES[timeframe]
-        indexed = dataframe.set_index("time")
-        resampled = indexed.resample(resample_rule).agg(
-            {
-                "open": "first",
-                "close": "last",
-                "high": "max",
-                "low": "min",
-                "real_volume": "sum",
-                "spread": "last",
-                "tick_volume": "sum",
-            }
-        )
-        resampled = resampled.dropna(subset=["open", "close", "high", "low", "spread"])
-        return resampled.reset_index(drop=False)
-
-    @staticmethod
-    def _normalize_indicator_output(
-        indicator_values: pd.Series | pd.DataFrame,
-        index: pd.Index,
-        column_names: Sequence[str],
-        buffers: Sequence[int],
-    ) -> pd.DataFrame:
-        if isinstance(indicator_values, pd.Series):
-            if set(buffers) != {0}:
-                raise ValueError("Series indicator outputs only support buffer index 0.")
-            return pd.DataFrame({column_names[0]: indicator_values.to_numpy(copy=False)}, index=index)
-
-        if not isinstance(indicator_values, pd.DataFrame):
-            raise ValueError("Indicator functions must return a pandas Series or DataFrame.")
-
-        columns = list(indicator_values.columns)
-        normalized: dict[str, np.ndarray] = {}
-        for buffer_index, column_name in zip(buffers, column_names):
-            if buffer_index < 0 or buffer_index >= len(columns):
-                raise ValueError(
-                    f"Buffer index {buffer_index} is out of range for indicator output with {len(columns)} buffers."
-                )
-            normalized[column_name] = indicator_values.iloc[:, buffer_index].to_numpy(copy=False)
-        return pd.DataFrame(normalized, index=index)
-
-    @staticmethod
-    def _align_indicator_to_main_timeframe(
-        indicator_timeframe: pd.DataFrame,
-        indicator_values: pd.DataFrame,
-        main_times: pd.DataFrame,
-        *,
-        allow_exact_matches: bool,
-    ) -> pd.DataFrame:
-        source = indicator_timeframe.copy().reset_index(drop=True)
-        source = pd.concat([source, indicator_values.reset_index(drop=True)], axis=1)
-        aligned = pd.merge_asof(
-            main_times.sort_values("time"),
-            source.sort_values("time"),
-            on="time",
-            direction="backward",
-            allow_exact_matches=allow_exact_matches,
-        )
-        return aligned
-
-    def _metadata_indicator_specs(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "name": spec["name"],
-                "function_name": spec["function_name"],
-                "timeframe": spec["timeframe"],
-                "buffers": list(spec["buffers"]),
-                "kwargs": spec["kwargs"],
-                "column_names": list(spec["column_names"]),
-            }
-            for spec in self.indicator_specs
-        ]
 
     @staticmethod
     def _normalize_timeframe(timeframe: str) -> str:

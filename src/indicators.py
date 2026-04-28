@@ -7,6 +7,7 @@ import pandas as pd
 
 
 def tf_ma(df: pd.DataFrame, period: int = 12, column: str = "close") -> pd.Series:
+    
     values = df[column].astype(float)
     return values.rolling(window=period, min_periods=period).mean()
 

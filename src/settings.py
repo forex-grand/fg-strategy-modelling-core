@@ -16,7 +16,7 @@ class Settings:
         default_factory=lambda: os.getenv("S3_STORAGE_OPTION", "minio")
     )
     s3_endpoint: Optional[str] = field(
-        default_factory=lambda: os.getenv("S3_ENDPOINT", "http://localhost:9001")
+        default_factory=lambda: os.getenv("S3_ENDPOINT", "http://localhost:9000")
     )
     s3_access_key: Optional[str] = field(
         default_factory=lambda: os.getenv("S3_ACCESS_KEY", "minio")
@@ -35,4 +35,52 @@ class Settings:
     )
     data_directory: Optional[str] = field(
         default_factory=lambda: os.getenv("DATA_DIRECTORY", "../../data")
+    )
+    train_bucket_name: Optional[str] = field(
+        default_factory=lambda: os.getenv("TRAIN_BUCKET_NAME", "forexgrand-train")
+    )
+    eval_bucket_name: Optional[str] = field(
+        default_factory=lambda: os.getenv("EVAL_BUCKET_NAME", "forexgrand-eval")
+    )
+    test_bucket_name: Optional[str] = field(
+        default_factory=lambda: os.getenv("TEST_BUCKET_NAME", "forexgrand-test")
+    )
+    tf_record_compression_type: Optional[str] = field(
+        default_factory=lambda: os.getenv("TF_RECORD_COMPRESSION", "GZIP")
+    )
+
+    ##Model Training settings section
+    generated_data_strides: Optional[int] = field(
+        default_factory=lambda: int(os.getenv("SEQUENCE_STRIDE", 100))
+    )
+    batch_size: Optional[int] = field(
+        default_factory=lambda: int(os.getenv("BATCH_SIZE", 64))
+    )
+    shuffle_data: Optional[bool] = field(
+        default_factory=lambda: bool(os.getenv("SHUFFLE_TRAIN_DATA", True))
+    )
+    shuffle_buffer_size: Optional[int] = field(
+        default_factory=lambda: int(os.getenv("SHUFFLE_BUFFER_SIZE",10000))
+    )
+    learning_rate: Optional[float] = field(
+        default_factory=lambda: float(os.getenv("LEARNING_RATE", 1e-3))
+    )
+    epochs: Optional[int] = field(
+        default_factory=lambda: float(os.getenv("EPOCHS", 50))
+    )
+    steps_per_epoch: Optional[int] = field(
+        default_factory=lambda: int(os.getenv('STEPS_PER_EPOCH', 1000))
+    )
+    ##evaluation benchmarks
+    eval_min_precision: Optional[float] = field(
+        default_factory=lambda: int(os.getenv('EVAL_MIN_PRECISION', 0.55))
+    )
+    eval_min_recall: Optional[float] = field(
+        default_factory=lambda: int(os.getenv('EVAL_MIN_RECALL', 0.4))
+    )
+    eval_max_overfit_gap: Optional[float] = field(
+        default_factory=lambda: int(os.getenv('MAX_OVERFIT_GAP', 0.2))
+    )
+    models_bucket: Optional[str] = field(
+        default_factory=lambda: os.getenv("MODEL_UPLOAD_BUCKET","forexgrand-models")
     )
