@@ -5,11 +5,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Type, List
-
+import asyncio
 import pandas as pd
 import tensorflow as tf
 from keras import callbacks, metrics, optimizers, Layer
 
+from src.models_architecture.train_models.cnn_bi_lstm import CNNBiLSTMModel
+from src.models_architecture.train_models.complex_model import ComplexNSTrainModel
+from src.models_architecture.train_models.conservative_model import ConservativeNSTrainModel
+from src.models_architecture.train_models.lstm_model import LSTMModel
 from src.settings import Settings
 from src.pipeline.evaluator import Evaluator
 from src.pipeline.generate_train_data import GenerateTrainData
@@ -17,8 +21,8 @@ from src.pipeline.preprocessing.base_preprocessor import PreprocessBase
 from src.pipeline.pusher import ModelPusher
 from src.models_architecture.base_model import BaseModel
 from src.models_architecture.no_train_model import NoTrainModel
-from src.models_architecture.train_models.no_sequence_models.simple_model import SimpleNSTrainModel
-from src.utils.fg_tester_client import request_live_test
+from src.models_architecture.train_models.simple_model import SimpleNSTrainModel
+from src.pipeline.performance_test import test_model_live_performance
 from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments
 LOGGER = logging.getLogger(__name__)
 from src.schemas import EpochMetricsLogger, TrainingResult
@@ -29,9 +33,10 @@ class Trainer:
     MODEL_REGISTRY = {
         "no-train": NoTrainModel,
         "simple-ns": SimpleNSTrainModel,
-        # "simple": SimpleModel,
-        # "complex": ComplexModel,
-        # "transformer": TransformerModel,
+        "conservative-ns": ConservativeNSTrainModel,
+        "complex-ns": ComplexNSTrainModel,
+        "lstm": LSTMModel,
+        "cnn-bi-lstm": CNNBiLSTMModel,
     }
 
     def __init__(
@@ -43,6 +48,7 @@ class Trainer:
         sequence_length: int,
         target_model_type: TARGET_MODEL_TYPES,
         hot_reload_data: bool = False,
+        run_performance_test: bool = False,
     ) -> None:
         self.symbols: List[SymbolIn] = symbols
         self.model_types = [item.strip().lower() for item in model_types]
@@ -55,6 +61,7 @@ class Trainer:
         self.pusher = ModelPusher(self.config)
         self.sequence_length = sequence_length
         self.hot_reload_data = hot_reload_data
+        self.run_performance_test = run_performance_test
 
     def run(self) -> list[TrainingResult]:
         """Execute training for all requested model types."""
@@ -73,15 +80,17 @@ class Trainer:
 
             print(f"Data start: {data_start}, Data End: {data_end}.")
             for model_type in self.model_types:
-                results.append(self._run_single(symbol.symbol.strip().upper(),
-                                                model_type, train_path=train_path, 
+                results.append(self._run_single(symbol=symbol.symbol.strip().upper(),
+                                                group=symbol.group.strip().lower(),
+                                                model_type=model_type,
+                                                train_path=train_path,
                                                 eval_path=eval_path,
                                                 data_start=data_start, 
                                                 data_end=data_end),)
 
         return results
 
-    def _run_single(self, symbol, model_type: str, train_path: str, eval_path: str,
+    def _run_single(self, symbol,group, model_type: str, train_path: str, eval_path: str,
                     data_start: str, data_end: str) -> TrainingResult:
         if model_type not in self.MODEL_REGISTRY:
             raise ValueError(f"Unsupported model type '{model_type}'.")
@@ -91,6 +100,7 @@ class Trainer:
         preprocessor = self.preprocessor_class(sequence_length=sequence_length)
         train_ds = self.get_training_data(train_path, preprocessor=preprocessor)
         eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor)
+        print(eval_path)
 
         model_class = self.MODEL_REGISTRY[model_type]
         model: BaseModel = model_class(sequence_length=sequence_length, preprocessor=preprocessor)
@@ -115,6 +125,7 @@ class Trainer:
             model_obj = model.model
 
             eval_values = raw_model.evaluate(eval_ds, return_dict=True, verbose=0)
+            print(f"Evaluation results for {symbol} {model_type}: {eval_values}")
             metric_values = {
                 "accuracy": float(eval_values.get("accuracy", 0.0)),
                 # "auc": float(eval_values.get("auc", 0.0)),
@@ -129,6 +140,7 @@ class Trainer:
             evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
             if not evaluator_passed:
                 LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
+                LOGGER.warning(f"Failure Reasons: {_reason_map}")
                 return TrainingResult(
                     symbol=symbol,
                     model_type=model_type,
@@ -154,8 +166,9 @@ class Trainer:
         )
 
         try:
-            request_live_test(model_id, symbol, self.config)
-        except Exception as error:  # Optional stub should never block flow.
+            if self.run_performance_test:
+                test_model_live_performance(model, symbol, group, sequence_length, self.config, model_id)
+        except Exception as error:
             LOGGER.warning("Optional fg-tester call failed for %s/%s: %s", symbol, model_type, error)
 
         return TrainingResult(
@@ -165,7 +178,7 @@ class Trainer:
             evaluator_passed=True,
             model_gcs_path=model.generate_model_path(self.sequence_length, "no_train_model"),
             metrics=metric_values,
-            model=model_obj,
+            model=model,
             model_id= model_id,
         )
 

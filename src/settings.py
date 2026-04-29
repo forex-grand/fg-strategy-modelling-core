@@ -66,21 +66,30 @@ class Settings:
         default_factory=lambda: float(os.getenv("LEARNING_RATE", 1e-3))
     )
     epochs: Optional[int] = field(
-        default_factory=lambda: float(os.getenv("EPOCHS", 50))
+        default_factory=lambda: int(os.getenv("EPOCHS", 50))
     )
     steps_per_epoch: Optional[int] = field(
         default_factory=lambda: int(os.getenv('STEPS_PER_EPOCH', 1000))
     )
     ##evaluation benchmarks
     eval_min_precision: Optional[float] = field(
-        default_factory=lambda: int(os.getenv('EVAL_MIN_PRECISION', 0.55))
+        default_factory=lambda: float(os.getenv('EVAL_MIN_PRECISION', 0.55))
     )
     eval_min_recall: Optional[float] = field(
-        default_factory=lambda: int(os.getenv('EVAL_MIN_RECALL', 0.4))
+        default_factory=lambda: float(os.getenv('EVAL_MIN_RECALL', 0.4))
     )
     eval_max_overfit_gap: Optional[float] = field(
-        default_factory=lambda: int(os.getenv('MAX_OVERFIT_GAP', 0.2))
+        default_factory=lambda: float(os.getenv('MAX_OVERFIT_GAP', 0.2))
     )
+
     models_bucket: Optional[str] = field(
         default_factory=lambda: os.getenv("MODEL_UPLOAD_BUCKET","forexgrand-models")
     )
+    ##URL for performance testing service integration
+    performance_base_url: Optional[str] = field(
+        default_factory=lambda: os.getenv("PERFORMANCE_BASE_URL", "http://localhost:8002")
+    )
+    test_bucket_name: Optional[str] = field(
+        default_factory=lambda: os.getenv("TEST_BUCKET_NAME", "forexgrand-test")
+    )
+    

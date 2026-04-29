@@ -1,41 +1,24 @@
-"""Conservative low-complexity model."""
-
-from __future__ import annotations
-
+from src.models_architecture.train_models.base_train_model import TrainModel
 import tensorflow as tf
-from keras import layers
+import keras
 
-from src.models_architecture.train_models.base_train_model import BaseSignalModel
-from src.pipeline.preprocessing.base_preprocessor import PreprocessBase
+class ConservativeNSTrainModel(TrainModel):
+    """
+    Conservative No-Sequence Model.
+    """
+    def __init__(self, preprocessor, sequence_length):
+        super().__init__(preprocessor, sequence_length)
+    
+    def build_model(self, input_spec:dict[str,tf.TensorSpec]):
+        inputs = {k: keras.Input(shape=(spec.shape[-1] or 1,), name=k, dtype=spec.dtype)
+              for k, spec in input_spec.items()}
+        x = keras.layers.concatenate(list(inputs.values()))
+        for units in [64, 64, 32]:
+            x = keras.layers.Dense(units)(x)
+            x = keras.layers.BatchNormalization()(x)
+            x = keras.layers.Activation("relu")(x)
+            x = keras.layers.Dropout(0.3)(x)
+        output = keras.layers.Dense(3, activation="softmax")(x)
+        return keras.Model(inputs, output)
 
-
-class ConservativeModel(BaseSignalModel):
-    """Shallow LSTM with regularized dense head."""
-
-    def __init__(self, *, sequence_length: int, preprocessor: PreprocessBase) -> None:
-        super().__init__(
-            sequence_length=sequence_length,
-            preprocessor=preprocessor,
-            model_name="conservative_model",
-        )
-        self.lstm = layers.LSTM(
-            32,
-            kernel_regularizer=self.kernel_regularizer,
-            return_sequences=False,
-            name="lstm",
-        )
-        self.bn = layers.BatchNormalization(name="bn")
-        self.dropout = layers.Dropout(0.25, name="dropout")
-        self.dense = layers.Dense(
-            32,
-            activation="relu",
-            kernel_regularizer=self.kernel_regularizer,
-            name="dense",
-        )
-
-    def encode(self, features: tf.Tensor, training: bool = False) -> tf.Tensor:
-        x = self.lstm(features, training=training)
-        x = self.bn(x, training=training)
-        x = self.dropout(x, training=training)
-        return self.dense(x)
-
+    

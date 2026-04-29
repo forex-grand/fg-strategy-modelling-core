@@ -49,7 +49,7 @@ class TrainingResult:
     model_gcs_path: str | None
     metrics: dict[str, float]
     model: tf.keras.Model
-    model_id: str
+    model_id: Optional[str] = None 
 
 class EpochMetricsLogger(callbacks.Callback):
     """Logs key metrics after each epoch."""
