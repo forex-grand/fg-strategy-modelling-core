@@ -88,7 +88,9 @@ class DataManager:
             raise ValueError("No data source found in environment variables.")
         
         self.data_directory = Path(self.settings.data_directory).expanduser().resolve()
-        self.storage_client:BaseStorageClient = self._build_storage_client()
+        self.storage_client:BaseStorageClient = self._build_storage_client()(
+          self.settings,
+        )
         self.base_bucket_name = (
             (base_bucket_name or "").strip()
             or self.settings.s3_bucket_name
