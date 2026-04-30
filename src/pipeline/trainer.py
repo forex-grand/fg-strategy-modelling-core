@@ -10,8 +10,8 @@ import pandas as pd
 import tensorflow as tf
 from keras import callbacks, metrics, optimizers, Layer
 
-from src.models_architecture.train_models.cnn_bi_lstm import CNNBiLSTMModel
 from src.models_architecture.train_models.complex_model import ComplexNSTrainModel
+from src.models_architecture.train_models.cnn_bi_lstm import CNNBiLSTMModel
 from src.models_architecture.train_models.conservative_model import ConservativeNSTrainModel
 from src.models_architecture.train_models.lstm_model import LSTMModel
 from src.settings import Settings

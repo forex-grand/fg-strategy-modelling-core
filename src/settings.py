@@ -1,3 +1,37 @@
+"""Configuration settings for ForexGrand strategy modelling core.
+
+This module provides the Settings dataclass that loads configuration from environment variables.
+All settings have sensible defaults for local development.
+
+Environment Variables:
+    DATA_SOURCE: Data source type (default: 'mt5'). Options: 'mt5', 'other'
+    FORCE_RELOAD: Force reload data from storage (default: 'false')
+    S3_STORAGE_OPTION: Storage backend (default: 'minio'). Options: 'minio', 'aws', 'gcs', 'cloudflare'
+    S3_ENDPOINT: S3/MinIO endpoint URL (default: 'http://localhost:9000')
+    S3_ACCESS_KEY: S3 access key (default: 'minio')
+    S3_SECRET_KEY: S3 secret key (default: 'minioadmin')
+    S3_REGION_NAME: AWS region (default: 'us-east-1')
+    S3_SESSION_TOKEN: AWS session token for temporary credentials (optional)
+    S3_BUCKET_NAME: Main bucket name (default: 'forexgrand')
+    DATA_DIRECTORY: Local data cache directory (default: '../../data')
+    TRAIN_BUCKET_NAME: Training data bucket (default: 'forexgrand-train')
+    EVAL_BUCKET_NAME: Evaluation data bucket (default: 'forexgrand-eval')
+    TEST_BUCKET_NAME: Test data bucket (default: 'forexgrand-test')
+    TF_RECORD_COMPRESSION: TFRecord compression type (default: 'GZIP'). Options: 'GZIP', 'ZSTD'
+    SEQUENCE_STRIDE: Data generation stride (default: 100)
+    BATCH_SIZE: Training batch size (default: 64)
+    SHUFFLE_TRAIN_DATA: Shuffle training data (default: True)
+    SHUFFLE_BUFFER_SIZE: Shuffle buffer size (default: 10000)
+    LEARNING_RATE: Model learning rate (default: 1e-3)
+    EPOCHS: Number of training epochs (default: 50)
+    STEPS_PER_EPOCH: Steps per epoch (default: 1000)
+    EVAL_MIN_PRECISION: Minimum precision threshold (default: 0.55)
+    EVAL_MIN_RECALL: Minimum recall threshold (default: 0.4)
+    MAX_OVERFIT_GAP: Maximum overfitting gap (default: 0.2)
+    MODEL_UPLOAD_BUCKET: Model upload bucket (default: 'forexgrand-models')
+    PERFORMANCE_BASE_URL: Performance testing service URL (default: 'http://localhost:8002')
+"""
+
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -5,6 +39,40 @@ from typing import Optional
 
 @dataclass
 class Settings:
+    """Configuration settings loaded from environment variables.
+    
+    This class provides typed access to all configuration settings used throughout
+    the ForexGrand strategy modelling core. Settings are loaded from environment
+    variables with sensible defaults for local development.
+    
+    Attributes:
+        data_source: Data source type (e.g., 'mt5')
+        force_reload: Whether to force reload data from remote storage
+        s3_storage_option: Which S3-compatible storage backend to use
+        s3_endpoint: URL endpoint for S3/MinIO storage
+        s3_access_key: Access key for S3 authentication
+        s3_secret_key: Secret key for S3 authentication
+        s3_region_name: AWS region name
+        s3_session_token: Temporary session token for AWS access
+        s3_bucket_name: Main S3 bucket name
+        data_directory: Local directory for caching downloaded data
+        train_bucket_name: Bucket for training data
+        eval_bucket_name: Bucket for evaluation data
+        test_bucket_name: Bucket for test data
+        tf_record_compression_type: Compression type for TFRecord files
+        generated_data_strides: Stride for data generation sequences
+        batch_size: Batch size for model training
+        shuffle_data: Whether to shuffle training data
+        shuffle_buffer_size: Size of shuffle buffer
+        learning_rate: Learning rate for model optimization
+        epochs: Number of training epochs
+        steps_per_epoch: Steps per training epoch
+        eval_min_precision: Minimum precision benchmark for evaluation
+        eval_min_recall: Minimum recall benchmark for evaluation
+        eval_max_overfit_gap: Maximum allowed overfitting gap
+        models_bucket: Bucket for storing trained models
+        performance_base_url: URL for performance testing service
+    """
     data_source: Optional[str] = field(
         default_factory=lambda: os.getenv("DATA_SOURCE", "mt5")
     )

@@ -1,3 +1,9 @@
+"""Data manager for loading and caching forex market data.
+
+This module provides the DataManager class that handles loading M1 (minute-level) forex data
+from configured S3-compatible storage, with local caching for performance.
+"""
+
 from __future__ import annotations
 
 import json
@@ -12,7 +18,55 @@ from src.storage.utils import getStorageClient, StorageOptionEnumeration
 from src.storage.base_client import BaseStorageClient
 from src.schemas import SymbolProperties
 
+
 class DataManager:
+    """Loads and caches M1 forex data from S3-compatible storage.
+    
+    This class manages data fetching from remote storage and local caching with validation.
+    It supports multiple S3-compatible backends (MinIO, AWS S3, GCS, Cloudflare R2).
+    
+    Attributes:
+        REQUIRED_COLUMNS: Set of required columns in forex data files.
+        settings: Configuration settings loaded from environment.
+        data_source: Data source type (e.g., 'mt5').
+        data_directory: Path to local data cache directory.
+        storage_client: Storage client for remote data access.
+        base_bucket_name: Name of the bucket for data storage.
+    
+    Raises:
+        ValueError: If data source is not configured or storage option is unsupported.
+    
+    Example:
+        >>> manager = DataManager(base_bucket_name="forexgrand-train")
+        >>> df, props = manager.load_data("EURUSD", "forex")
+        >>> print(df.head())
+    """
+    
+    REQUIRED_COLUMNS = {
+        "time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "tick_volume",
+        "real_volume",
+        "spread",
+    }
+
+    def __init__(
+        self,
+        base_bucket_name: Optional[str] = None,
+    ) -> None:
+        """Initialize DataManager with configuration.
+        
+        Args:
+            base_bucket_name: Optional bucket name override. If not provided, 
+                uses S3_BUCKET_NAME from environment (default: 'forexgrand').
+                
+        Raises:
+            ValueError: If DATA_SOURCE environment variable is not set or S3_STORAGE_OPTION
+                is not supported.
+        """
     REQUIRED_COLUMNS = {
         "time",
         "open",
@@ -42,6 +96,31 @@ class DataManager:
         self.storage_client.bucket_name = self.base_bucket_name
 
     def load_data(self, symbol_pair: str, instrument_group: str) -> tuple[pd.DataFrame, dict[str, Any]]:
+        """Load M1 forex data for a symbol pair.
+        
+        Loads market data from local cache if available and valid, otherwise downloads from
+        remote storage and updates the cache. Automatically validates all data.
+        
+        Args:
+            symbol_pair: Currency pair symbol (e.g., 'EURUSD'). Case-insensitive.
+            instrument_group: Instrument group classification (e.g., 'forex', 'metals', 'crypto').
+                Case-insensitive.
+        
+        Returns:
+            A tuple of:
+                - pd.DataFrame: Market data with OHLCV and spread columns
+                - dict: Symbol properties including contract size and other metadata
+        
+        Raises:
+            ValueError: If symbol_pair or instrument_group are empty/invalid, or if
+                data files are missing required columns or metadata.
+            OSError: If data files cannot be read or written.
+        
+        Example:
+            >>> manager = DataManager()
+            >>> df, props = manager.load_data("EURUSD", "forex")
+            >>> print(f"Loaded {len(df)} rows for {props['symbol']}")
+        """
         pair_name = symbol_pair.strip().upper()
         group_name = instrument_group.strip().lower()
         if not pair_name:
@@ -72,6 +151,14 @@ class DataManager:
         return dataframe, SymbolProperties.model_validate(properties)
 
     def _build_storage_client(self):
+        """Create and configure storage client based on settings.
+        
+        Returns:
+            BaseStorageClient: Configured storage client instance.
+            
+        Raises:
+            ValueError: If S3_STORAGE_OPTION is not supported.
+        """
         storage_option = (self.settings.s3_storage_option or "").strip().lower() or "minio"
         client_class = getStorageClient(self.settings.s3_storage_option)
         if client_class is None:
