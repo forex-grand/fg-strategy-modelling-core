@@ -39,13 +39,14 @@ def test_model_live_performance(
         config: Settings,
         model_id: str,
     ):
-    data_gen = GenerateTrainData(eval_base_bucket=config.eval_bucket_name, 
-                                 train_base_bucket=config.eval_bucket_name)
+    data_bucket = config.test_bucket_name.strip()
+    data_gen = GenerateTrainData(eval_base_bucket=data_bucket, 
+                                 train_base_bucket=data_bucket)
     seq_data1,_ = data_gen.load_data(symbol_pair=symbol, instrument_group=group, 
                                   sequence_length=sequence_length, stride=1000, hot_reload=False)
     
     load_data = tf.data.TFRecordDataset(seq_data1, compression_type=config.tf_record_compression_type)
-    # load_data = data_ser.take(20)
+
     model = model.get_serving_signature()
     batch_dataset = load_data.take(100).batch(20)
 
@@ -69,7 +70,8 @@ def test_model_live_performance(
         signals = None
         df.to_csv(temp_file.name, index=False)
         with open(temp_file.name, 'rb') as f:
-            signals = requests.post(f'{config.performance_base_url}/engine/signals/upload', data={'timestamp_unit':'auto'}, files={'file':f})
+            signals = requests.post(f'{config.performance_base_url}/engine/signals/upload', 
+            data={'timestamp_unit':'auto','data_bucket':data_bucket}, files={'file':f})
 
         performance_test_request = {
             "strategy":{
@@ -82,6 +84,7 @@ def test_model_live_performance(
             "trade_managers":trade_managers,
             "lotsizers":[{"type":"fixed_lot_size","params":{"fixed_lots":1}}],
             "data_source":"metaquotes",
+            "data_bucket":data_bucket,
             "name":f"{model_id}_{symbol}"
         }
 
