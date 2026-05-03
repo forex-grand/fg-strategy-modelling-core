@@ -148,7 +148,7 @@ class Trainer:
                     evaluator_passed=False,
                     model_gcs_path=None,
                     metrics=metric_values,
-                    model=model_obj,
+                    model=model,
                 )
 
         data_range = {
@@ -192,6 +192,9 @@ class Trainer:
             'spread':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
             'real_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
             'tick_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+            'target_value':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
+            'target_highest':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
+            'target_lowest':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
         })
 
     def preprocess(self, data, preprocess_layer: Layer):
