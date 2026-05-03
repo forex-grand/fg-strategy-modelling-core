@@ -55,6 +55,64 @@ class GenerateTrainData:
         self.train_properties: SymbolProperties = None
         self.eval_properties: SymbolProperties  = None
 
+    def load_single_data(
+        self,
+        bucket_name: str,
+        symbol_pair: str,
+        instrument_group: str,
+        sequence_length: int,
+        stride: int,
+        hot_reload: bool = False,
+        target_model: TARGET_MODEL_TYPES = None
+    ) -> tuple[Path, Path]:
+        self.sequence_length = sequence_length
+        self.stride = stride
+        self.target_model = target_model
+
+        pair_name = symbol_pair.strip().upper()
+        group_name = instrument_group.strip().lower()
+        if not pair_name:
+            raise ValueError("symbol_pair is required.")
+        if not group_name:
+            raise ValueError("instrument_group is required.")
+        bucket_manager = self._build_data_manager(bucket_name)
+        _raw_frame, self.train_properties = bucket_manager.load_data(pair_name, group_name)
+        _frame = self._prepare_feature_frame(_raw_frame)
+        metadata = self._build_metadata(
+            symbol_pair=pair_name,
+            instrument_group=group_name,
+            train_frame=_frame,
+            eval_frame=_frame,
+        )
+
+        existing_paths = self._find_existing_version_paths(
+            symbol_pair=pair_name,
+            instrument_group=group_name,
+            metadata=metadata,
+        )
+        if existing_paths is not None and not hot_reload:
+            return existing_paths
+
+        version_number = self._resolve_next_version_number(
+            symbol_pair=pair_name,
+            instrument_group=group_name,
+        )
+        _data_path = self._build_output_path(
+            base_bucket=bucket_name,
+            instrument_group=group_name,
+            symbol_pair=pair_name,
+            version_number=version_number,
+            filename="train.gz",
+        )
+
+        self.generate_train_data_examples(
+            _frame,
+            output_path=_data_path,
+        )
+        self._write_metadata(_data_path.parent / "metadata.json", metadata)
+
+        return _data_path
+
     def load_data(
         self,
         symbol_pair: str,
