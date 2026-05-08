@@ -167,7 +167,9 @@ class Trainer:
 
         try:
             if self.run_performance_test:
-                test_model_live_performance(model, symbol, group, sequence_length, self.config, model_id)
+                test_model_live_performance(model, symbol, group, 
+                                          sequence_length, self.config, model_id,
+                                          stride=self.config.test_generator_stride)
         except Exception as error:
             LOGGER.warning("Optional fg-tester call failed for %s/%s: %s", symbol, model_type, error)
 

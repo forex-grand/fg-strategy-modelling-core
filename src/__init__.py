@@ -38,20 +38,6 @@ validate_environment_on_import()
 
 # Import lightweight core modules first
 from src.settings import Settings
-from src.indicators import (
-    tf_ma,
-    tf_slope,
-    tf_atr,
-    tf_rsi,
-    tf_stdev,
-    tf_bollinger_bands,
-    tf_normalize_feature,
-    tf_german_klass_volatility,
-    tf_wick_bar_range_ratio,
-    ma_factory,
-    slope_factory,
-    atr_factory,
-)
 
 # Lazy-load modules with external dependencies
 def __getattr__(name):
@@ -80,16 +66,4 @@ __all__ = [
     "Trainer",
     "GenerateTrainData",
     "Evaluator",
-    "tf_ma",
-    "tf_slope",
-    "tf_atr",
-    "tf_rsi",
-    "tf_stdev",
-    "tf_bollinger_bands",
-    "tf_normalize_feature",
-    "tf_german_klass_volatility",
-    "tf_wick_bar_range_ratio",
-    "ma_factory",
-    "slope_factory",
-    "atr_factory",
 ]

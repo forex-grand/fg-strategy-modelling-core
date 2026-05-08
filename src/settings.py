@@ -160,4 +160,6 @@ class Settings:
     test_bucket_name: Optional[str] = field(
         default_factory=lambda: os.getenv("TEST_BUCKET_NAME", "forexgrand-test")
     )
-    
+    test_generator_stride: Optional[int] = field(
+        default_factory=lambda: int(os.getenv("TEST_GENERATOR_STRIDE", "1000"))
+    )
