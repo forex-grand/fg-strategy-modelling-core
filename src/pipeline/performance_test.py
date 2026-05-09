@@ -128,6 +128,7 @@ def test_model_live_performance(
             "lotsizers": lotsizers,
             "data_source": "metaquotes",
             "data_bucket": data_bucket,
+            "group":group,
             "name": f"{model_id}_{symbol}"
         }
 
