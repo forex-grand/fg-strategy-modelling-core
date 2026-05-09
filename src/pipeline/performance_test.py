@@ -10,45 +10,45 @@ from src.pipeline.generate_train_data import GenerateTrainData
 
 trade_managers = [
     ###fixed stop loss and take profit points
-    {"type":"fixed_sl_tp","params":{"stop_loss_points":50,"take_profit_points":100}},
-    {"type":"fixed_sl_tp","params":{"stop_loss_points":100,"take_profit_points":200}},
-    {"type":"fixed_sl_tp","params":{"stop_loss_points":100,"take_profit_points":100}},
+    # {"type":"fixed_sl_tp","params":{"stop_loss_points":50,"take_profit_points":100}},
+    # {"type":"fixed_sl_tp","params":{"stop_loss_points":100,"take_profit_points":200}},
+    # {"type":"fixed_sl_tp","params":{"stop_loss_points":100,"take_profit_points":100}},
     {"type":"fixed_sl_tp","params":{"stop_loss_points":200,"take_profit_points":200}},
     {"type":"fixed_sl_tp","params":{"stop_loss_points":200,"take_profit_points":100}},
 
     # # ##RISK REWARD BASED
-    {"type":"risk_reward", "params":{"rr_ratio":1.0,
-                            "sl_calculator":{"type":"fixed","sl_points":200}}},
-    {"type":"risk_reward", "params":{"rr_ratio":2.0,
-                "sl_calculator":{"type":"atr","atr_period":14,"atr_multiplier":1.5,"atr_timeframe":"M5"}}},
-    {"type":"risk_reward", "params":{"rr_ratio":1.0,
-                "sl_calculator":{"type":"stdev", "stdev_period":20,"stdev_multiplier":2.0,"stdev_timeframe":"M5"}}},
-    {"type":"risk_reward", "params":{"rr_ratio":2.0,
-                "sl_calculator":{"type":"swing","swing_bars":21,"swing_timeframe":"M5"}}},
+    # {"type":"risk_reward", "params":{"rr_ratio":3.0,
+    #                         "sl_calculator":{"type":"fixed","sl_points":200}}},
+    # {"type":"risk_reward", "params":{"rr_ratio":3.0,
+    #             "sl_calculator":{"type":"atr","atr_period":14,"atr_multiplier":1.5,"atr_timeframe":"M5"}}},
+    # {"type":"risk_reward", "params":{"rr_ratio":3.0,
+    #             "sl_calculator":{"type":"stdev", "stdev_period":20,"stdev_multiplier":1.0,"stdev_timeframe":"M5"}}},
+    # {"type":"risk_reward", "params":{"rr_ratio":3.0,
+    #             "sl_calculator":{"type":"swing","swing_bars":14,"swing_timeframe":"M15"}}},
     ###SL DISTANCE TRIGGER
     {"type":"chandelier_exit", "params":{"period":14,"multiplier":3.0,"timeframe":"M5","use_close":False}},
+    {"type":"chandelier_exit", "params":{"period":7,"multiplier":2.0,"timeframe":"M5","use_close":False}},
 
     # ###BREAKEVEN STOP
-    {"type":"breakeven_stop", "params":{"lock_in_points":10,"trigger":{
-        "type":"atr_trigger", "atr_period":14, "atr_multiplier":2.0, "timeframe": "M5"}}},
-    {"type":"breakeven_stop", "params":{"lock_in_points":10,"trigger":{
-        "type":"sl_distance_trigger", "sl_ratio":2}}},
+    # {"type":"breakeven_stop", "params":{"lock_in_points":10,"trigger":{
+    #     "type":"atr_trigger", "atr_period":14, "atr_multiplier":2.0, "timeframe": "M5"}}},
+    # {"type":"breakeven_stop", "params":{"lock_in_points":10,"trigger":{
+    #     "type":"sl_distance_trigger", "sl_ratio":2}}},
 
     # ##MULTIPLE TARGETS
-    {"type":"multiple_targets", "params":{"tp1_fraction":0.33,"tp2_fraction":0.33, "target_config":{"type":"atr_distance", "timeframe":"M5"}}},
-    {"type":"multiple_targets", "params":{"tp1_fraction":0.33,"tp2_fraction":0.33, "target_config":{"type":"sl_ratio_distance"}}},
+    # {"type":"multiple_targets", "params":{"tp1_fraction":0.33,"tp2_fraction":0.33, "target_config":{"type":"atr_distance", "timeframe":"M5"}}},
+    # {"type":"multiple_targets", "params":{"tp1_fraction":0.33,"tp2_fraction":0.33, "target_config":{"type":"sl_ratio_distance"}}},
 
     # ##TIME STOP BASED
-    {"type":"time_stop", "params": {"max_duration_minutes":5}},
-    {"type":"time_stop", "params": {"max_duration_minutes":15}},
-    {"type":"time_stop", "params": {"max_duration_minutes":30}},
     {"type":"time_stop", "params": {"max_duration_minutes":60}},
     {"type":"time_stop", "params": {"max_duration_minutes":240}},
+    {"type":"time_stop", "params": {"max_duration_minutes":360}},
+    {"type":"time_stop", "params": {"max_duration_minutes":720}},
     ]
 
 lotsizers = [
     ##fixed lotsize
-    {"type":"fixed_lot_size", "params":{"fixed_lots":1.0}},
+    # {"type":"fixed_lot_size", "params":{"fixed_lots":1.0}},
 
     ##percentage risk
     {"type":"percentage_risk", "params":{"risk_pct":0.02, "min_lots":0.01, "max_lots":1}},
