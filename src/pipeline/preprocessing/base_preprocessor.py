@@ -196,7 +196,20 @@ class PreprocessBase(keras.layers.Layer, metaclass=abc.ABCMeta):
             )
             # bar_tuples is a tuple of 8 tensors, each shape (num_bars,)
             return bar_tuples
-    
+        results = [compute_bars_from_row((bar_start_indexes[i],opens[i],highs[i],closes[i], lows[i], real_vol[i], spread[i], tick_vols[i])) for i in range(bar_start_indexes.shape[0])]
+
+        full_data = {
+          'time':  tf.stack([b[0] for b in results]),
+          'open':  tf.stack([b[1] for b in results]),
+          'close': tf.stack([b[2] for b in results]),
+          'high':  tf.stack([b[3] for b in results]),
+          'low':   tf.stack([b[4] for b in results]),
+          'spread':tf.stack([b[5] for b in results]),
+          'real_vol':tf.stack([b[6] for b in results]),
+          'tick_vol':tf.stack([b[7] for b in results]),
+          } 
+      
+        return full_data
     def extract_end_times(
         self,
         x:tf.Tensor,
