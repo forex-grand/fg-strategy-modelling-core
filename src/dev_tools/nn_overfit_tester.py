@@ -1,10 +1,3 @@
-"""
-Neural Network Overfit Tester
-==============================
-Builds a simple Dense model and tries to overfit on preprocessed features.
-If the model can memorise the training data, the features carry learning signal.
-"""
-
 import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
@@ -12,12 +5,12 @@ warnings.filterwarnings("ignore")
 import keras
 import tensorflow as tf
 from collections import Counter
+from sklearn.utils.class_weight import compute_class_weight
 
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
-OVERFIT_ACCURACY_THRESHOLD = 0.90      # train accuracy to consider "overfit achieved"
-EVAL_FRACTION              = 0.001     # fraction held out for gap logging only
-
+OVERFIT_ACCURACY_THRESHOLD = 0.90
+EVAL_FRACTION              = 0.001
 
 CLASS_LABELS = {0: "Long  (>+10)", 1: "Short (<-10)", 2: "Neutral"}
 
@@ -31,10 +24,6 @@ def _to_numpy(v):
 
 
 def _flatten_and_concat(features_np: dict, exclude=("target",)):
-    """
-    Flatten every feature tensor to 2-D (batch, cols) then hstack.
-    Returns X (float32 ndarray) and column name list.
-    """
     cols, names = [], []
     for name, arr in features_np.items():
         if name in exclude:
@@ -43,11 +32,9 @@ def _flatten_and_concat(features_np: dict, exclude=("target",)):
             arr = arr.reshape(-1, 1)
         elif arr.ndim > 2:
             arr = arr.reshape(arr.shape[0], -1)
-        # arr is now (batch, n_cols)
         n = arr.shape[1]
         cols.append(arr.astype(np.float32))
         names += [name] if n == 1 else [f"{name}[{i}]" for i in range(n)]
-
     X = np.concatenate(cols, axis=1)
     return X, names
 
@@ -57,7 +44,6 @@ def _print_section(title, char="─", width=64):
 
 
 def _safe_metrics(y_true, y_pred, classes):
-    """Per-class precision, recall, f1 (pure numpy, no sklearn needed)."""
     result = {}
     for cls in classes:
         tp = ((y_pred == cls) & (y_true == cls)).sum()
@@ -71,13 +57,11 @@ def _safe_metrics(y_true, y_pred, classes):
 
 
 def _build_model(input_dim: int, n_classes: int, config: dict) -> keras.Model:
-    """Build a Sequential Dense model from a config dict."""
-    layers_cfg = config["layers"]            # list of unit counts
-    dropout     = config.get("dropout", 0.0)
-    activation  = config.get("activation", "relu")
-    l2_reg      = config.get("l2", 0.0)
-
-    reg = keras.regularizers.l2(l2_reg) if l2_reg else None
+    layers_cfg = config["layers"]
+    dropout    = config.get("dropout", 0.0)
+    activation = config.get("activation", "relu")
+    l2_reg     = config.get("l2", 0.0)
+    reg        = keras.regularizers.l2(l2_reg) if l2_reg else None
 
     model = keras.Sequential(name=config["name"])
     model.add(keras.layers.Input(shape=(input_dim,)))
@@ -101,9 +85,9 @@ def _build_model(input_dim: int, n_classes: int, config: dict) -> keras.Model:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Model configs  – all push toward overfitting
+# Model configs
 # ──────────────────────────────────────────────────────────────────────────────
-def _get_configs(input_dim: int):
+def _get_configs():
     return [
         {
             "name":       "wide_shallow",
@@ -111,10 +95,10 @@ def _get_configs(input_dim: int):
             "lr":         1e-3,
             "dropout":    0.0,
             "l2":         0.0,
-            "epochs":     300,
-            "batch_size": 32,
+            "epochs":     500,
+            "batch_size": 16,
             "activation": "relu",
-            "note":       "Wide, no regularisation – quick memoriser",
+            "note":       "Wide, no reg, small batch",
         },
         {
             "name":       "deep_narrow",
@@ -122,10 +106,10 @@ def _get_configs(input_dim: int):
             "lr":         5e-4,
             "dropout":    0.0,
             "l2":         0.0,
-            "epochs":     400,
-            "batch_size": 16,
+            "epochs":     600,
+            "batch_size": 8,
             "activation": "relu",
-            "note":       "Deep, tiny batches – forces memorisation",
+            "note":       "Deep, tiny batch — forces minority class learning",
         },
         {
             "name":       "massive_overfit",
@@ -133,10 +117,10 @@ def _get_configs(input_dim: int):
             "lr":         2e-3,
             "dropout":    0.0,
             "l2":         0.0,
-            "epochs":     500,
-            "batch_size": 64,
+            "epochs":     600,
+            "batch_size": 16,
             "activation": "relu",
-            "note":       "Huge capacity, high LR – brute-force memoriser",
+            "note":       "Huge capacity, high LR",
         },
         {
             "name":       "leaky_deep",
@@ -144,10 +128,21 @@ def _get_configs(input_dim: int):
             "lr":         1e-3,
             "dropout":    0.0,
             "l2":         0.0,
-            "epochs":     400,
-            "batch_size": 32,
+            "epochs":     600,
+            "batch_size": 8,
             "activation": "leaky_relu",
-            "note":       "Deep with leaky relu – avoids dying neurons",
+            "note":       "Deep leaky relu — avoids dying neurons on imbalanced data",
+        },
+        {
+            "name":       "tiny_batch_brute",
+            "layers":     [256, 128, 128, 64],
+            "lr":         5e-4,
+            "dropout":    0.0,
+            "l2":         0.0,
+            "epochs":     1000,
+            "batch_size": 4,
+            "activation": "relu",
+            "note":       "Batch=4 guarantees minority class exposure every few steps",
         },
     ]
 
@@ -160,22 +155,8 @@ def test_nn_overfit(
     example_data,
     sequence_length: int = 100,
     eval_fraction:   float = EVAL_FRACTION,
-    verbose_keras:   int   = 0,          # 0=silent, 1=progress bar, 2=one line/epoch
+    verbose_keras:   int   = 0,
 ):
-    """
-    Test whether preprocessed features can be memorised by a Dense network.
-
-    Args:
-        preprocess_cls:  The Preprocess class (not an instance).
-        example_data:    Raw data dict passed to preprocess(data, training=True).
-        sequence_length: Passed to the preprocessor constructor.
-        eval_fraction:   Fraction held out for overfit-gap logging only.
-        verbose_keras:   Keras fit verbosity level.
-
-    Returns:
-        dict with per-config results and a top-level 'passed' flag.
-    """
-
     # ── 1. Preprocess ──────────────────────────────────────────────────────────
     _print_section("Step 1 · Preprocessing")
     preprocessor = preprocess_cls(sequence_length=sequence_length)
@@ -188,7 +169,7 @@ def test_nn_overfit(
     n_samples, n_cols = X.shape
     n_classes         = len(set(target.tolist()))
     print(f"  Samples        : {n_samples}")
-    print(f"  Input columns  : {n_cols}  (after flattening 2-D features)")
+    print(f"  Input columns  : {n_cols}")
     print(f"  Classes        : {n_classes}")
 
     # ── 2. Class distribution ──────────────────────────────────────────────────
@@ -200,29 +181,36 @@ def test_nn_overfit(
         pct = 100.0 * n / n_samples
         print(f"  Class {cls}  {CLASS_LABELS.get(cls, str(cls)):<18}  {n:>6}  ({pct:.1f} %)")
 
-    # ── 3. Split ───────────────────────────────────────────────────────────────
-    _print_section("Step 3 · Train / eval split")
+    # ── 3. Class weights ───────────────────────────────────────────────────────
+    _print_section("Step 3 · Class weights (balanced)")
+    cw = compute_class_weight("balanced", classes=np.array(classes), y=target)
+    class_weight_dict = dict(zip(classes, cw))
+    for cls, w in class_weight_dict.items():
+        print(f"  Class {cls}  {CLASS_LABELS.get(cls, str(cls)):<18}  weight = {w:.4f}")
+
+    # ── 4. Split ───────────────────────────────────────────────────────────────
+    _print_section("Step 4 · Train / eval split")
     n_eval  = max(1, int(n_samples * eval_fraction))
     n_train = n_samples - n_eval
 
-    rng        = np.random.default_rng(42)
-    idx        = rng.permutation(n_samples)
+    rng            = np.random.default_rng(42)
+    idx            = rng.permutation(n_samples)
     tr_idx, ev_idx = idx[:n_train], idx[n_train:]
 
     X_train, y_train = X[tr_idx], target[tr_idx]
-    X_eval,  y_eval  = X[ev_idx],  target[ev_idx]
+    X_eval,  y_eval  = X[ev_idx], target[ev_idx]
     print(f"  Train : {n_train}   Eval (gap log only) : {n_eval}")
 
-    # Normalise inputs (z-score on train stats)
+    # Z-score normalise on train stats
     mu    = X_train.mean(axis=0, keepdims=True)
-    sigma = X_train.std(axis=0, keepdims=True) + 1e-8
+    sigma = X_train.std(axis=0,  keepdims=True) + 1e-8
     X_train = (X_train - mu) / sigma
     X_eval  = (X_eval  - mu) / sigma
 
-    # ── 4. Train configs ───────────────────────────────────────────────────────
-    _print_section("Step 4 · Training configs")
-    configs  = _get_configs(n_cols)
-    results  = {}
+    # ── 5. Train configs ───────────────────────────────────────────────────────
+    _print_section("Step 5 · Training configs")
+    configs    = _get_configs()
+    results    = {}
     passed_any = False
 
     for cfg in configs:
@@ -232,47 +220,52 @@ def test_nn_overfit(
 
         model = _build_model(n_cols, n_classes, cfg)
 
-        # Early stop only if train acc is already perfect (save time)
+        # Early stopping — no baseline, generous patience
         early_stop = keras.callbacks.EarlyStopping(
             monitor="accuracy",
-            patience=40,
+            patience=80,
             restore_best_weights=True,
-            baseline=0.999,
+            min_delta=1e-4,
+        )
+
+        # Reduce LR on plateau to squeeze out last accuracy gains
+        reduce_lr = keras.callbacks.ReduceLROnPlateau(
+            monitor="loss",
+            factor=0.5,
+            patience=30,
+            min_lr=1e-6,
+            verbose=0,
         )
 
         history = model.fit(
             X_train, y_train,
             epochs=cfg["epochs"],
             batch_size=cfg["batch_size"],
-            callbacks=[early_stop],
+            class_weight=class_weight_dict,   # ← handles imbalance
+            callbacks=[early_stop, reduce_lr],
             verbose=verbose_keras,
         )
 
         epochs_ran = len(history.history["loss"])
 
-        # ── Train metrics ──────────────────────────────────────────────────
-        pred_train_prob  = model.predict(X_train, verbose=0)
-        pred_train       = pred_train_prob.argmax(axis=1)
-        train_acc        = (pred_train == y_train).mean()
-        train_loss       = history.history["loss"][-1]
+        # ── Metrics ────────────────────────────────────────────────────────
+        pred_train = model.predict(X_train, verbose=0).argmax(axis=1)
+        pred_eval  = model.predict(X_eval,  verbose=0).argmax(axis=1)
 
-        # ── Eval metrics (gap only) ────────────────────────────────────────
-        pred_eval_prob   = model.predict(X_eval, verbose=0)
-        pred_eval        = pred_eval_prob.argmax(axis=1)
-        eval_acc         = (pred_eval == y_eval).mean()
-
-        # ── Per-class metrics ──────────────────────────────────────────────
-        train_cls_metrics = _safe_metrics(y_train, pred_train, classes)
-        eval_cls_metrics  = _safe_metrics(y_eval,  pred_eval,  classes)
-
+        train_acc  = (pred_train == y_train).mean()
+        eval_acc   = (pred_eval  == y_eval ).mean()
+        train_loss = history.history["loss"][-1]
         overfit_gap = train_acc - eval_acc
+
+        train_cls = _safe_metrics(y_train, pred_train, classes)
+        eval_cls  = _safe_metrics(y_eval,  pred_eval,  classes)
+
         config_passed = train_acc >= OVERFIT_ACCURACY_THRESHOLD
         if config_passed:
             passed_any = True
 
         status = "✅ PASSED" if config_passed else "❌ did not overfit"
 
-        # ── Print ──────────────────────────────────────────────────────────
         print(f"\n    Status       : {status}   (ran {epochs_ran}/{cfg['epochs']} epochs)")
         print(f"    Train acc    : {train_acc:.4f}   Train loss : {train_loss:.4f}")
         print(f"    Eval  acc    : {eval_acc:.4f}   Overfit gap: {overfit_gap:+.4f}")
@@ -281,52 +274,47 @@ def test_nn_overfit(
               f"{'Tr-F1':>7}  {'Ev-Prec':>8} {'Ev-Rec':>7}")
         print(f"    {'─'*6} {'─'*18} {'─'*8} {'─'*8} {'─'*7}  {'─'*8} {'─'*7}")
         for cls in classes:
-            tm = train_cls_metrics[cls]
-            em = eval_cls_metrics[cls]
+            tm = train_cls[cls]
+            em = eval_cls[cls]
             print(f"    {cls:<6} {CLASS_LABELS.get(cls, str(cls)):<18} "
                   f"{tm['precision']:>8.3f} {tm['recall']:>8.3f} {tm['f1']:>7.3f}  "
                   f"{em['precision']:>8.3f} {em['recall']:>7.3f}")
 
         results[cfg["name"]] = {
-            "model":             model,
-            "train_acc":         train_acc,
-            "eval_acc":          eval_acc,
-            "overfit_gap":       overfit_gap,
-            "train_cls_metrics": train_cls_metrics,
-            "eval_cls_metrics":  eval_cls_metrics,
-            "epochs_ran":        epochs_ran,
-            "history":           history.history,
-            "passed":            config_passed,
+            "model":        model,
+            "train_acc":    train_acc,
+            "eval_acc":     eval_acc,
+            "overfit_gap":  overfit_gap,
+            "train_cls":    train_cls,
+            "eval_cls":     eval_cls,
+            "epochs_ran":   epochs_ran,
+            "history":      history.history,
+            "passed":       config_passed,
         }
 
-    # ── 5. Final verdict ───────────────────────────────────────────────────────
-    _print_section("Step 5 · Final verdict", char="═")
+    # ── 6. Final verdict ───────────────────────────────────────────────────────
+    _print_section("Step 6 · Final verdict", char="═")
+
+    best     = max(results, key=lambda n: results[n]["train_acc"])
+    best_acc = results[best]["train_acc"]
 
     if passed_any:
         winners = [n for n, r in results.items() if r["passed"]]
-        best    = max(results, key=lambda n: results[n]["train_acc"])
-        best_acc = results[best]["train_acc"]
         print(f"\n  ✅  FEATURES HAVE LEARNING SIGNAL")
-        print(f"  The network successfully overfit the training data.")
         print(f"  Passing config(s)  : {', '.join(winners)}")
         print(f"  Best train accuracy: {best_acc:.4f}  ({best})")
-        print()
-        print(f"  Interpretation:")
-        print(f"  ├─ A Dense model can memorise these features → signal exists.")
+        print(f"\n  Interpretation:")
+        print(f"  ├─ Dense network can memorise these features → signal exists.")
         print(f"  ├─ High overfit gap is expected and desired here.")
-        print(f"  └─ Next: train with proper regularisation + validation split.")
+        print(f"  └─ Next: train with regularisation + proper train/val/test split.")
     else:
-        best     = max(results, key=lambda n: results[n]["train_acc"])
-        best_acc = results[best]["train_acc"]
         print(f"\n  ⚠️  NO CONFIG OVERFIT — features may lack sufficient signal.")
         print(f"  Best train accuracy: {best_acc:.4f}  ({best})")
-        print()
-        print(f"  Possible causes:")
-        print(f"  ├─ Too few samples to memorise (try a larger subset).")
-        print(f"  ├─ Features are too collinear or uninformative.")
-        print(f"  ├─ Target noise is too high relative to feature signal.")
-        print(f"  ├─ Class imbalance preventing minority class learning.")
-        print(f"  └─ Try increasing epochs or adding more indicator periods.")
+        print(f"\n  Possible causes:")
+        print(f"  ├─ Too few samples (try a larger subset).")
+        print(f"  ├─ Features are collinear or uninformative.")
+        print(f"  ├─ Target noise too high relative to feature signal.")
+        print(f"  └─ Consider adding more indicator periods or raw price features.")
 
     print(f"\n{'═'*64}\n")
 
@@ -335,5 +323,6 @@ def test_nn_overfit(
         "per_config":      results,
         "feature_columns": names,
         "class_counts":    dict(counts),
+        "class_weights":   class_weight_dict,
         "input_dim":       n_cols,
     }
