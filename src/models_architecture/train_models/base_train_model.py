@@ -20,27 +20,39 @@ class TrainModel(BaseModel):
     ) -> None:
         super().__init__(sequence_length=sequence_length, preprocessor=preprocessor)
         self.history: keras.callbacks.History | None = None
+        self.strategy = tf.distribute.MirroredStrategy()
 
     @abstractmethod
     def build_model(self, input_spec: dict) -> tf.keras.Model:
         """Should be implemented by individual subclasses"""
 
-    def build_train_model(self, train_ds: tf.data.Dataset, eval_ds: tf.data.Dataset, fn_args: ModelBuildTrainArguments) -> keras.callbacks.History:
-        model = self.build_model(input_spec=train_ds.element_spec[0])
+    def _get_metrics(self) -> list[keras.metrics.Metric]:
+        return [
+            keras.metrics.CategoricalAccuracy(name='accuracy'),
+            keras.metrics.Precision(name="precision_buy", class_id=0),
+            keras.metrics.Precision(name="precision_sell", class_id=1),
+            keras.metrics.Precision(name="precision_hold", class_id=2),
+            keras.metrics.Recall(name="recall_buy", class_id=0),
+            keras.metrics.Recall(name="recall_sell", class_id=1),
+            keras.metrics.Recall(name="recall_hold", class_id=2),
+        ]
 
-        model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
-            loss=keras.losses.CategoricalCrossentropy(),
-            metrics=[
-                     keras.metrics.CategoricalAccuracy(name='accuracy'),
-                     keras.metrics.Precision(name="precision_buy", class_id=0),
-                     keras.metrics.Precision(name="precision_sell", class_id=1),
-                     keras.metrics.Precision(name="precision_hold", class_id=2),
-                     keras.metrics.Recall(name="recall_buy", class_id=0),
-                     keras.metrics.Recall(name="recall_sell", class_id=1),
-                     keras.metrics.Recall(name="recall_hold", class_id=2),
-                     ],
-        )
+    def build_train_model(self, train_ds: tf.data.Dataset, eval_ds: tf.data.Dataset, fn_args: ModelBuildTrainArguments) -> keras.Model:
+        train_ds = self.strategy.experimental_distribute_dataset(train_ds)
+        eval_ds = self.strategy.experimental_distribute_dataset(eval_ds)
+
+        with self.strategy.scope():
+            model = self.build_model(input_spec=train_ds.element_spec[0])
+            model.compile(
+                optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
+                loss=keras.losses.CategoricalCrossentropy(),
+                metrics=self._get_metrics(),
+            )
+
+        # confirm model is on GPU
+        if model.weights:
+            print(f"[INFO] Model device: {model.weights[0].device}")
+
         callbacks: list[keras.callbacks.Callback] = [
             keras.callbacks.EarlyStopping(
                 monitor="val_loss",
@@ -48,6 +60,7 @@ class TrainModel(BaseModel):
                 restore_best_weights=True,
             )
         ]
+
         self.history = model.fit(
             train_ds,
             validation_data=eval_ds,
@@ -57,24 +70,19 @@ class TrainModel(BaseModel):
             verbose=1,
         )
 
-        ##Build actual model
-        inputs = {inp.name:inp for inp in self._build_input_signature()}
-        preprocess = self.preprocessor(inputs)
-        inference  = model(preprocess)
-        output = keras.layers.Lambda(lambda x:tf.argmax(x, axis=-1))(inference)        
-        self.model = keras.Model(inputs, output)
-        self.model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
-            loss=keras.losses.CategoricalCrossentropy(),
-            metrics=[
-                     keras.metrics.CategoricalAccuracy(name='accuracy'),
-                     keras.metrics.Precision(name="precision_buy", class_id=0),
-                     keras.metrics.Precision(name="precision_sell", class_id=1),
-                     keras.metrics.Precision(name="precision_hold", class_id=2),
-                     keras.metrics.Recall(name="recall_buy", class_id=0),
-                     keras.metrics.Recall(name="recall_sell", class_id=1),
-                     keras.metrics.Recall(name="recall_hold", class_id=2),
-                     ],)
+        # Build inference model inside strategy scope
+        with self.strategy.scope():
+            inputs = {inp.name: inp for inp in self._build_input_signature()}
+            preprocess = self.preprocessor(inputs)
+            inference = model(preprocess)
+            output = keras.layers.Lambda(lambda x: tf.argmax(x, axis=-1))(inference)
+            self.model = keras.Model(inputs, output)
+            self.model.compile(
+                optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
+                loss=keras.losses.CategoricalCrossentropy(),
+                metrics=self._get_metrics(),
+            )
+
         return model
 
     def _get_inference_model(self) -> keras.Model:
