@@ -486,4 +486,169 @@ class GenerateTrainData:
         }
 
     def _find_existing_version_paths(
-        s
+        self,
+        *,
+        symbol_pair: str,
+        instrument_group: str,
+        metadata: dict[str, object],
+    ) -> Optional[tuple[Path, Path]]:
+        train_root = self._build_version_root(
+            base_bucket=self.train_base_bucket,
+            instrument_group=instrument_group,
+            symbol_pair=symbol_pair,
+        )
+        eval_root = self._build_version_root(
+            base_bucket=self.eval_base_bucket,
+            instrument_group=instrument_group,
+            symbol_pair=symbol_pair,
+        )
+        if not train_root.exists() or not eval_root.exists():
+            return None
+
+        common_versions = sorted(
+            set(self._list_version_numbers(train_root)).intersection(
+                self._list_version_numbers(eval_root)
+            ),
+            reverse=True,
+        )
+        for version_number in common_versions:
+            train_dir = train_root / str(version_number)
+            eval_dir = eval_root / str(version_number)
+            train_data_path = train_dir / "train.gz"
+            eval_data_path = eval_dir / "eval.gz"
+            train_metadata_path = train_dir / "metadata.json"
+            eval_metadata_path = eval_dir / "metadata.json"
+            if not (
+                train_data_path.exists()
+                and eval_data_path.exists()
+                and train_metadata_path.exists()
+                and eval_metadata_path.exists()
+            ):
+                continue
+
+            train_metadata = self._read_metadata(train_metadata_path)
+            eval_metadata = self._read_metadata(eval_metadata_path)
+            if train_metadata != eval_metadata:
+                continue
+            if self._metadata_matches(train_metadata, metadata):
+                return train_data_path, eval_data_path
+        return None
+
+    def _resolve_next_version_number(
+        self,
+        *,
+        symbol_pair: str,
+        instrument_group: str,
+    ) -> int:
+        train_root = self._build_version_root(
+            base_bucket=self.train_base_bucket,
+            instrument_group=instrument_group,
+            symbol_pair=symbol_pair,
+        )
+        eval_root = self._build_version_root(
+            base_bucket=self.eval_base_bucket,
+            instrument_group=instrument_group,
+            symbol_pair=symbol_pair,
+        )
+        version_numbers = (
+            self._list_version_numbers(train_root) + self._list_version_numbers(eval_root)
+        )
+        return (max(version_numbers) + 1) if version_numbers else 1
+
+    def _build_version_root(
+        self,
+        *,
+        base_bucket: str,
+        instrument_group: str,
+        symbol_pair: str,
+    ) -> Path:
+        return (
+            self.data_directory
+            / base_bucket
+            / self.train_data_manager.data_source
+            / instrument_group
+            / symbol_pair
+            / str(self.sequence_length)
+        )
+
+    @staticmethod
+    def _list_version_numbers(root: Path) -> list[int]:
+        if not root.exists():
+            return []
+        versions: list[int] = []
+        for child in root.iterdir():
+            if child.is_dir() and child.name.isdigit():
+                versions.append(int(child.name))
+        return sorted(versions)
+
+    @staticmethod
+    def _read_metadata(metadata_path: Path) -> dict[str, object]:
+        with metadata_path.open("r", encoding="utf-8") as file_handle:
+            return json.load(file_handle)
+
+    @staticmethod
+    def _write_metadata(metadata_path: Path, metadata: dict[str, object]) -> None:
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        with metadata_path.open("w", encoding="utf-8") as file_handle:
+            json.dump(metadata, file_handle, indent=2)
+
+    @staticmethod
+    def _metadata_matches(
+        existing_metadata: dict[str, object],
+        current_metadata: dict[str, object],
+    ) -> bool:
+        keys_to_match = {
+            "data_source",
+            "instrument_group",
+            "symbol_pair",
+            "timeframe",
+            "sequence_length",
+            "stride",
+            "feature_columns",
+            "indicator_specs",
+            "train_row_count",
+            "train_example_count",
+            "train_start_time",
+            "train_end_time",
+            "eval_row_count",
+            "eval_example_count",
+            "eval_start_time",
+            "eval_end_time",
+        }
+        return all(
+            existing_metadata.get(key) == current_metadata.get(key) for key in keys_to_match
+        )
+
+    def _count_examples(self, dataframe: pd.DataFrame) -> int:
+        return max(0, ((len(dataframe) - self.sequence_length) // self.stride) + 1)
+
+    @staticmethod
+    def _normalize_timeframe(timeframe: str) -> str:
+        normalized = timeframe.strip().lower()
+        if normalized not in GenerateTrainData.TIMEFRAME_ALIASES:
+            supported = ", ".join(sorted(GenerateTrainData.TIMEFRAME_ALIASES))
+            raise ValueError(
+                f"Unsupported timeframe '{timeframe}'. Supported values: {supported}."
+            )
+        return normalized
+
+    @staticmethod
+    def _isoformat(value: pd.Timestamp) -> str:
+        timestamp = pd.Timestamp(value)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize("UTC")
+        else:
+            timestamp = timestamp.tz_convert("UTC")
+        return timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    @staticmethod
+    def _timeframe_to_minutes(timeframe: str) -> int:
+        unit = timeframe[-1]
+        quantity = int(timeframe[:-1])
+        if unit == "m":
+            return quantity
+        if unit == "h":
+            return quantity * 60
+        if unit == "d":
+            return quantity * 1440
+        raise ValueError(f"Unsupported timeframe '{timeframe}'.")
