@@ -98,8 +98,8 @@ class Trainer:
         sequence_length = int(self.sequence_length)
 
         preprocessor = self.preprocessor_class(sequence_length=sequence_length)
-        train_ds = self.get_training_data(train_path, preprocessor=preprocessor)
-        eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor)
+        train_ds = self.get_training_data(train_path, preprocessor=preprocessor, repeat=True)
+        eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor, repeat=False)
         
 
         model_class = self.MODEL_REGISTRY[model_type]
