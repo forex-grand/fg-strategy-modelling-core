@@ -38,11 +38,10 @@ class TrainModel(BaseModel):
         ]
 
     def build_train_model(self, train_ds: tf.data.Dataset, eval_ds: tf.data.Dataset, fn_args: ModelBuildTrainArguments) -> keras.Model:
+        model = self.build_model(input_spec=train_ds.element_spec[0])
         train_ds = self.strategy.experimental_distribute_dataset(train_ds)
         eval_ds = self.strategy.experimental_distribute_dataset(eval_ds)
-
-        model = self.build_model(input_spec=train_ds.element_spec[0])
-            
+    
         with self.strategy.scope():
             model.compile(
                 optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
