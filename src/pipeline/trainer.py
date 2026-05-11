@@ -204,7 +204,7 @@ class Trainer:
         target = data.pop('target')
         return data, tf.one_hot(target, depth=3)
     
-    def get_training_data(self, file_pattern: str, preprocessor: Layer):
+    def get_training_data(self, file_pattern: str, preprocessor: Layer, repeat=False):
         import glob
         files = sorted(glob.glob(str(file_pattern) + "/train_*.gz"))
         data = tf.data.TFRecordDataset(
@@ -221,6 +221,7 @@ class Trainer:
             lambda x: self.preprocess(x, preprocess_layer=preprocessor),
             num_parallel_calls=tf.data.AUTOTUNE
         )
-        data = data.repeat()
+        if repeat:
+          data = data.repeat()
         data = data.prefetch(tf.data.AUTOTUNE)
         return data
