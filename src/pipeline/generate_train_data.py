@@ -11,6 +11,11 @@ from src.data_manager import DataManager
 from src.settings import Settings
 from src.schemas import TARGET_MODEL_TYPES, TimeBasedTarget, PointsBasedTarget, SymbolProperties
 
+# GZIP level 1 = fast compression, far less CPU than default level 6.
+# ML training data does not benefit meaningfully from higher compression.
+_TFRECORD_OPTIONS = tf.io.TFRecordOptions(compression_type="GZIP", compression_level=1)
+
+
 class GenerateTrainData:
     """Generate versioned TensorFlow training and evaluation TFRecords."""
 
@@ -34,6 +39,10 @@ class GenerateTrainData:
         "1d": "1d",
     }
 
+    # Number of TFExamples serialized per write batch.
+    # Keeps per-iteration Python overhead low without blowing memory.
+    _WRITE_CHUNK_SIZE = 4_000
+
     def __init__(
         self,
         train_base_bucket: str = "forexgrand-train",
@@ -46,14 +55,18 @@ class GenerateTrainData:
         if not self.train_base_bucket or not self.eval_base_bucket:
             raise ValueError("Both train bucket and eval bucket name is required.")
 
-        self.train_data_manager:DataManager = self._build_data_manager(base_bucket_name=self.train_base_bucket)
-        self.eval_data_manager:DataManager = self._build_data_manager(base_bucket_name=self.eval_base_bucket)
+        self.train_data_manager: DataManager = self._build_data_manager(base_bucket_name=self.train_base_bucket)
+        self.eval_data_manager: DataManager = self._build_data_manager(base_bucket_name=self.eval_base_bucket)
         self.data_directory = Path(self.settings.data_directory).expanduser().resolve()
         self.stride = None
         self.sequence_length = None
-        self.target_model:TARGET_MODEL_TYPES = None
+        self.target_model: TARGET_MODEL_TYPES = None
         self.train_properties: SymbolProperties = None
-        self.eval_properties: SymbolProperties  = None
+        self.eval_properties: SymbolProperties = None
+
+    # ------------------------------------------------------------------ #
+    #  Public API — unchanged signatures, fully compatible with Trainer   #
+    # ------------------------------------------------------------------ #
 
     def load_single_data(
         self,
@@ -63,7 +76,7 @@ class GenerateTrainData:
         sequence_length: int,
         stride: int,
         hot_reload: bool = False,
-        target_model: TARGET_MODEL_TYPES = None
+        target_model: TARGET_MODEL_TYPES = None,
     ) -> tuple[Path, Path]:
         self.sequence_length = sequence_length
         self.stride = stride
@@ -105,12 +118,8 @@ class GenerateTrainData:
             filename="train.gz",
         )
 
-        self.generate_train_data_examples(
-            _frame,
-            output_path=_data_path,
-        )
+        self.generate_train_data_examples(_frame, output_path=_data_path)
         self._write_metadata(_data_path.parent / "metadata.json", metadata)
-
         return _data_path
 
     def load_data(
@@ -120,7 +129,7 @@ class GenerateTrainData:
         sequence_length: int,
         stride: int,
         hot_reload: bool = False,
-        target_model: TARGET_MODEL_TYPES = None
+        target_model: TARGET_MODEL_TYPES = None,
     ) -> tuple[Path, Path]:
         self.sequence_length = sequence_length
         self.stride = stride
@@ -171,40 +180,188 @@ class GenerateTrainData:
             filename="eval.gz",
         )
 
-        self.generate_train_data_examples(
-            train_frame,
-            output_path=train_data_path,
-        )
-        self.generate_eval_data_examples(
-            eval_frame,
-            output_path=eval_data_path,
-        )
+        self.generate_train_data_examples(train_frame, output_path=train_data_path)
+        self.generate_eval_data_examples(eval_frame, output_path=eval_data_path)
         self._write_metadata(train_data_path.parent / "metadata.json", metadata)
         self._write_metadata(eval_data_path.parent / "metadata.json", metadata)
         return train_data_path, eval_data_path
 
-    def generate_train_data_examples(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        output_path: Path,
-    ) -> Path:
+    def generate_train_data_examples(self, dataframe: pd.DataFrame, *, output_path: Path) -> Path:
         self._write_examples(dataframe, output_path=output_path, symbol_properties=self.train_properties)
         return output_path
 
-    def generate_eval_data_examples(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        output_path: Path,
-    ) -> Path:
+    def generate_eval_data_examples(self, dataframe: pd.DataFrame, *, output_path: Path) -> Path:
         self._write_examples(dataframe, output_path=output_path, symbol_properties=self.eval_properties)
         return output_path
 
-    def _build_data_manager(
+    # ------------------------------------------------------------------ #
+    #  Core write path — optimized                                        #
+    # ------------------------------------------------------------------ #
+
+    def _write_examples(
         self,
-        base_bucket_name: str,
-    ) -> DataManager:
+        dataframe: pd.DataFrame,
+        symbol_properties: SymbolProperties,
+        *,
+        output_path: Path,
+    ) -> None:
+        sequence_data = self._build_sequence_data(dataframe)
+
+        target_data, _counts = {}, None
+        if self.target_model:
+            target_data, _counts = self._build_target_data(
+                dataframe=dataframe, symbol_properties=symbol_properties
+            )
+        target_counts = (
+            min(sequence_data["num_examples"], _counts) if _counts else sequence_data["num_examples"]
+        )
+
+        # --- Build a flat dict of all arrays, sliced to target_counts ---
+        all_arrays: dict[str, np.ndarray] = {}
+        for k, v in sequence_data.items():
+            if k == "num_examples":
+                continue
+            all_arrays[k] = v[:target_counts]
+        for k, v in target_data.items():
+            all_arrays[k] = v[:target_counts]
+
+        # --- Pre-convert ALL arrays to Python lists ONCE (avoids per-row .tolist()) ---
+        # Shape per key: (target_counts, seq_len) for sequences, (target_counts, 1) for targets.
+        pre_converted: dict[str, list] = {k: v.tolist() for k, v in all_arrays.items()}
+
+        # Separate time key for int64 vs float32 branching (done once, not per example)
+        time_rows = pre_converted.pop("time")
+        float_items = list(pre_converted.items())  # [(col, [rows...]), ...]
+
+        print("Examples:", sequence_data["num_examples"], " Targets:", target_counts)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with tf.io.TFRecordWriter(str(output_path), options=_TFRECORD_OPTIONS) as writer:
+            # --- Chunked loop: reduces Python GC pressure on huge datasets ---
+            for chunk_start in range(0, target_counts, self._WRITE_CHUNK_SIZE):
+                chunk_end = min(chunk_start + self._WRITE_CHUNK_SIZE, target_counts)
+                for index in range(chunk_start, chunk_end):
+                    features: dict[str, tf.train.Feature] = {
+                        "time": tf.train.Feature(
+                            int64_list=tf.train.Int64List(value=time_rows[index])
+                        )
+                    }
+                    for col, rows in float_items:
+                        features[col] = tf.train.Feature(
+                            float_list=tf.train.FloatList(value=rows[index])
+                        )
+                    writer.write(
+                        tf.train.Example(
+                            features=tf.train.Features(feature=features)
+                        ).SerializeToString()
+                    )
+
+    # ------------------------------------------------------------------ #
+    #  Sequence builder — single-pass windowing across all columns        #
+    # ------------------------------------------------------------------ #
+
+    def _build_sequence_data(self, dataframe: pd.DataFrame) -> dict[str, np.ndarray | int]:
+        if len(dataframe) < self.sequence_length:
+            raise ValueError(
+                f"At least {self.sequence_length} rows are required to create sequences."
+            )
+
+        time_values = (
+            dataframe["time"]
+            .astype("datetime64[s]")
+            .astype("int64")
+            .to_numpy(copy=False)
+        ).astype(np.int64, copy=False)
+
+        # Stack all feature columns into a single 2-D array, then window once.
+        # This replaces N separate sliding_window_view calls with one call.
+        feature_matrix = np.stack(
+            [dataframe[col].to_numpy(dtype=np.float32, copy=False) for col in self.feature_columns],
+            axis=1,
+        )  # (N, num_features)
+
+        # sliding_window_view over a 2-D array produces shape
+        # (N - seq_len + 1, 1, seq_len, num_features) — squeeze axis 1.
+        windowed = np.lib.stride_tricks.sliding_window_view(
+            feature_matrix, (self.sequence_length, feature_matrix.shape[1])
+        )[:, 0, :, :]  # (windows, seq_len, num_features)
+
+        if self.stride > 1:
+            windowed = windowed[:: self.stride]
+
+        time_windowed = self._window_array(time_values, dtype=np.int64)
+
+        sequence_data: dict[str, np.ndarray | int] = {"time": time_windowed}
+        for i, col in enumerate(self.feature_columns):
+            # Extract column slice and ensure C-contiguous layout for fast .tolist()
+            sequence_data[col] = np.ascontiguousarray(windowed[:, :, i])
+
+        sequence_data["num_examples"] = int(time_windowed.shape[0])
+        return sequence_data
+
+    # ------------------------------------------------------------------ #
+    #  Target builder — unchanged logic, consistent shapes                #
+    # ------------------------------------------------------------------ #
+
+    def _calculate_points_diff(self, price_arr1, price_arr2, points_size) -> np.ndarray:
+        return (price_arr1 - price_arr2) // points_size
+
+    def _build_target_data(self, dataframe: pd.DataFrame, symbol_properties: SymbolProperties):
+        if isinstance(self.target_model, TimeBasedTarget):
+            required_cols = ["high", "low", "close"]
+            target_seq_length = self.target_model.stop_minutes
+            target_sequences = {
+                col: np.lib.stride_tricks.sliding_window_view(
+                    dataframe[col].to_numpy(), target_seq_length
+                )
+                for col in required_cols
+            }
+
+            pos_prices = np.lib.stride_tricks.sliding_window_view(
+                dataframe["close"].to_numpy(), target_seq_length
+            )
+            pos_prices = pos_prices[self.sequence_length - 1: -1, 0]
+            pos_prices = pos_prices[:: self.stride]
+
+            points = symbol_properties.point_size
+            target_cols = {
+                "target_highest": np.expand_dims(
+                    self._calculate_points_diff(
+                        np.max(target_sequences["high"][self.sequence_length :: self.stride], axis=-1),
+                        pos_prices,
+                        points,
+                    ).astype("float32"),
+                    axis=-1,
+                ),
+                "target_lowest": np.expand_dims(
+                    self._calculate_points_diff(
+                        pos_prices,
+                        np.min(target_sequences["low"][self.sequence_length :: self.stride], axis=-1),
+                        points,
+                    ).astype("float32"),
+                    axis=-1,
+                ),
+                "target_value": np.expand_dims(
+                    self._calculate_points_diff(
+                        pos_prices,
+                        target_sequences["close"][self.sequence_length :: self.stride, -1],
+                        points,
+                    ).astype("float32"),
+                    axis=-1,
+                ),
+            }
+            print("target_highest shape:", target_cols["target_highest"].shape)
+            return target_cols, pos_prices.shape[0]
+
+        elif isinstance(self.target_model, PointsBasedTarget):
+            raise NotImplementedError("mode not implemented: use TimeBasedTarget.")
+
+    # ------------------------------------------------------------------ #
+    #  Helpers — unchanged                                                #
+    # ------------------------------------------------------------------ #
+
+    def _build_data_manager(self, base_bucket_name: str) -> DataManager:
         return DataManager(base_bucket_name=base_bucket_name)
 
     def _prepare_feature_frame(self, dataframe: pd.DataFrame) -> pd.DataFrame:
@@ -255,89 +412,14 @@ class GenerateTrainData:
             / filename
         )
 
-    def _write_examples(self, dataframe: pd.DataFrame, symbol_properties: SymbolProperties, *, output_path: Path) -> None:
-        sequence_data = self._build_sequence_data(dataframe)
-        
-        target_data, _counts = {}, None
-        if self.target_model:
-            target_data, _counts = self._build_target_data(dataframe=dataframe, symbol_properties=symbol_properties)
-        target_counts = min(sequence_data["num_examples"], _counts) if _counts else sequence_data["num_examples"]
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        options = tf.io.TFRecordOptions(compression_type="GZIP")
-        print("Examples: ",sequence_data["num_examples"]," Targets: ",target_counts)
-
-        with tf.io.TFRecordWriter(str(output_path), options=options) as writer:
-            for index in range(target_counts):
-                example = self._build_tf_example({
-                    column_name: values[index]
-                    for column_name, values in sequence_data.items()
-                    if column_name != "num_examples"
-                } | {
-                    column_name: values[index]
-                    for column_name, values in target_data.items()
-                })
-                writer.write(example.SerializeToString())
-
-    def _build_sequence_data(self, dataframe: pd.DataFrame) -> dict[str, np.ndarray | int]:
-        if len(dataframe) < self.sequence_length:
-            raise ValueError(
-                f"At least {self.sequence_length} rows are required to create sequences."
-            )
-        
-        time_values = (
-            dataframe["time"].astype("datetime64[s]")  # convert directly to second precision
-            .astype("int64")
-            .to_numpy(copy=False)
-        ).astype(np.int64, copy=False)
-        sequence_data: dict[str, np.ndarray | int] = {
-            "time": self._window_array(time_values, dtype=np.int64),
-        }
-        for column in self.feature_columns:
-            values = dataframe[column].to_numpy(dtype=np.float32, copy=False)
-            sequence_data[column] = self._window_array(values, dtype=np.float32)
-
-        sequence_data["num_examples"] = int(sequence_data["time"].shape[0])
-
-        return sequence_data
-
-    def _calculate_points_diff(self, price_arr1, price_arr2, points_size)->np.ndarray:
-        return (price_arr1 - price_arr2)//points_size
-    
-    def _build_target_data(self, dataframe: pd.DataFrame, symbol_properties: SymbolProperties):
-        if isinstance(self.target_model, TimeBasedTarget):
-            target_sequences = {}
-            required_cols = ['high','low','close']
-            target_seq_length = self.target_model.stop_minutes
-            for col in required_cols:
-                vals = np.lib.stride_tricks.sliding_window_view(
-                    dataframe[col].to_numpy(), target_seq_length)
-                target_sequences[col] = vals[self.sequence_length::self.stride]
-
-            pos_prices = np.lib.stride_tricks.sliding_window_view(
-                    dataframe['close'].to_numpy(), target_seq_length)
-            pos_prices = pos_prices[self.sequence_length-1:-1, 0]
-            pos_prices = pos_prices[::self.stride]
-            points = symbol_properties.point_size
-            target_cols = {
-                'target_highest':np.expand_dims(self._calculate_points_diff(np.max(target_sequences['high'], axis=-1),
-                                                             pos_prices, points).astype("float32"), axis=-1),
-                'target_lowest':np.expand_dims(self._calculate_points_diff(pos_prices, np.min(target_sequences['low'], axis=-1), points).astype("float32"), axis=-1),
-                'target_value':np.expand_dims(self._calculate_points_diff(pos_prices, target_sequences['close'][:,-1], points).astype("float32"), axis=-1),
-            }
-            print("target_highest shape: ",target_cols['target_highest'].shape)
-            return target_cols, pos_prices.shape[0]
-        elif isinstance(self.target_model, PointsBasedTarget):
-            raise NotImplemented("mode not implemented: use TimeBasedTarget.")
-
     def _window_array(self, values: np.ndarray, *, dtype: type[np.generic]) -> np.ndarray:
         windows = np.lib.stride_tricks.sliding_window_view(values, self.sequence_length)
         if self.stride > 1:
             windows = windows[:: self.stride]
         return np.ascontiguousarray(windows, dtype=dtype)
 
-
     def _build_tf_example(self, sequence_features: dict[str, np.ndarray]) -> tf.train.Example:
+        """Kept for external callers; internal write path no longer uses this."""
         features: dict[str, tf.train.Feature] = {}
         for column_name, values in sequence_features.items():
             if column_name == "time":
@@ -442,7 +524,9 @@ class GenerateTrainData:
             instrument_group=instrument_group,
             symbol_pair=symbol_pair,
         )
-        version_numbers = self._list_version_numbers(train_root) + self._list_version_numbers(eval_root)
+        version_numbers = (
+            self._list_version_numbers(train_root) + self._list_version_numbers(eval_root)
+        )
         return (max(version_numbers) + 1) if version_numbers else 1
 
     def _build_version_root(
@@ -505,7 +589,9 @@ class GenerateTrainData:
             "eval_start_time",
             "eval_end_time",
         }
-        return all(existing_metadata.get(key) == current_metadata.get(key) for key in keys_to_match)
+        return all(
+            existing_metadata.get(key) == current_metadata.get(key) for key in keys_to_match
+        )
 
     def _count_examples(self, dataframe: pd.DataFrame) -> int:
         return max(0, ((len(dataframe) - self.sequence_length) // self.stride) + 1)
@@ -515,7 +601,9 @@ class GenerateTrainData:
         normalized = timeframe.strip().lower()
         if normalized not in GenerateTrainData.TIMEFRAME_ALIASES:
             supported = ", ".join(sorted(GenerateTrainData.TIMEFRAME_ALIASES))
-            raise ValueError(f"Unsupported timeframe '{timeframe}'. Supported values: {supported}.")
+            raise ValueError(
+                f"Unsupported timeframe '{timeframe}'. Supported values: {supported}."
+            )
         return normalized
 
     @staticmethod
