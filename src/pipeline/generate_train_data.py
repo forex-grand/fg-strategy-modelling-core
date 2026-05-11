@@ -14,6 +14,7 @@ from src.schemas import TARGET_MODEL_TYPES, TimeBasedTarget, PointsBasedTarget, 
 # GZIP level 1 = fast compression, far less CPU than default level 6.
 # ML training data does not benefit meaningfully from higher compression.
 _TFRECORD_OPTIONS = tf.io.TFRecordOptions(compression_type="GZIP", compression_level=1)
+_SHARD_COUNT = 16
 
 
 class GenerateTrainData:
@@ -40,7 +41,6 @@ class GenerateTrainData:
     }
 
     # Number of TFExamples serialized per write batch.
-    # Keeps per-iteration Python overhead low without blowing memory.
     _WRITE_CHUNK_SIZE = 4_000
 
     def __init__(
@@ -65,7 +65,7 @@ class GenerateTrainData:
         self.eval_properties: SymbolProperties = None
 
     # ------------------------------------------------------------------ #
-    #  Public API — unchanged signatures, fully compatible with Trainer   #
+    #  Public API                                                         #
     # ------------------------------------------------------------------ #
 
     def load_single_data(
@@ -77,7 +77,7 @@ class GenerateTrainData:
         stride: int,
         hot_reload: bool = False,
         target_model: TARGET_MODEL_TYPES = None,
-    ) -> tuple[Path, Path]:
+    ) -> Path:
         self.sequence_length = sequence_length
         self.stride = stride
         self.target_model = target_model
@@ -88,6 +88,7 @@ class GenerateTrainData:
             raise ValueError("symbol_pair is required.")
         if not group_name:
             raise ValueError("instrument_group is required.")
+
         bucket_manager = self._build_data_manager(bucket_name)
         _raw_frame, self.train_properties = bucket_manager.load_data(pair_name, group_name)
         _frame = self._prepare_feature_frame(_raw_frame)
@@ -110,17 +111,17 @@ class GenerateTrainData:
             symbol_pair=pair_name,
             instrument_group=group_name,
         )
-        _data_path = self._build_output_path(
+        output_dir = self._build_output_dir(
             base_bucket=bucket_name,
             instrument_group=group_name,
             symbol_pair=pair_name,
             version_number=version_number,
-            filename="train.gz",
+            split="train",
         )
 
-        self.generate_train_data_examples(_frame, output_path=_data_path)
-        self._write_metadata(_data_path.parent / "metadata.json", metadata)
-        return _data_path
+        self.generate_train_data_examples(_frame, output_dir=output_dir)
+        self._write_metadata(output_dir / "metadata.json", metadata)
+        return output_dir
 
     def load_data(
         self,
@@ -165,49 +166,58 @@ class GenerateTrainData:
             symbol_pair=pair_name,
             instrument_group=group_name,
         )
-        train_data_path = self._build_output_path(
+        train_dir = self._build_output_dir(
             base_bucket=self.train_base_bucket,
             instrument_group=group_name,
             symbol_pair=pair_name,
             version_number=version_number,
-            filename="train.gz",
+            split="train",
         )
-        eval_data_path = self._build_output_path(
+        eval_dir = self._build_output_dir(
             base_bucket=self.eval_base_bucket,
             instrument_group=group_name,
             symbol_pair=pair_name,
             version_number=version_number,
-            filename="eval.gz",
+            split="eval",
         )
 
-        self.generate_train_data_examples(train_frame, output_path=train_data_path)
-        self.generate_eval_data_examples(eval_frame, output_path=eval_data_path)
-        self._write_metadata(train_data_path.parent / "metadata.json", metadata)
-        self._write_metadata(eval_data_path.parent / "metadata.json", metadata)
-        return train_data_path, eval_data_path
+        self.generate_train_data_examples(train_frame, output_dir=train_dir)
+        self.generate_eval_data_examples(eval_frame, output_dir=eval_dir)
+        self._write_metadata(train_dir / "metadata.json", metadata)
+        self._write_metadata(eval_dir / "metadata.json", metadata)
+        return train_dir, eval_dir
 
-    def generate_train_data_examples(self, dataframe: pd.DataFrame, *, output_path: Path) -> Path:
-        self._write_examples(dataframe, output_path=output_path, symbol_properties=self.train_properties)
-        return output_path
+    def generate_train_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path) -> Path:
+        shard_paths = self._build_shard_paths(output_dir, split="train")
+        self._write_examples_sharded(dataframe, output_paths=shard_paths, symbol_properties=self.train_properties)
+        return output_dir
 
-    def generate_eval_data_examples(self, dataframe: pd.DataFrame, *, output_path: Path) -> Path:
-        self._write_examples(dataframe, output_path=output_path, symbol_properties=self.eval_properties)
-        return output_path
+    def generate_eval_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path) -> Path:
+        shard_paths = self._build_shard_paths(output_dir, split="eval")
+        self._write_examples_sharded(dataframe, output_paths=shard_paths, symbol_properties=self.eval_properties)
+        return output_dir
 
     # ------------------------------------------------------------------ #
-    #  Core write path — streaming, no full-dataset materialisation       #
+    #  Core write path                                                    #
     # ------------------------------------------------------------------ #
 
-    def _write_examples(
+    def _build_shard_paths(self, output_dir: Path, split: str) -> list[Path]:
+        return [
+            output_dir / f"{split}_{i:05d}_of_{_SHARD_COUNT:05d}.gz"
+            for i in range(_SHARD_COUNT)
+        ]
+
+    def _write_examples_sharded(
         self,
         dataframe: pd.DataFrame,
         symbol_properties: SymbolProperties,
         *,
-        output_path: Path,
+        output_paths: list[Path],
     ) -> None:
-        # Count examples without building any arrays yet.
-        num_examples = self._count_examples(dataframe)
+        num_shards = len(output_paths)
+        output_paths[0].parent.mkdir(parents=True, exist_ok=True)
 
+        num_examples = self._count_examples(dataframe)
         target_data: dict[str, np.ndarray] = {}
         target_counts = num_examples
         if self.target_model:
@@ -217,56 +227,42 @@ class GenerateTrainData:
             target_counts = min(num_examples, _counts)
 
         print("Examples:", num_examples, " Targets:", target_counts)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Pre-extract raw 1-D numpy arrays from the dataframe — zero-copy views.
-        # We slide a window manually per chunk so we never hold all windows in RAM.
         time_raw = (
-            dataframe["time"]
-            .astype("datetime64[s]")
-            .astype("int64")
-            .to_numpy(copy=False)
+            dataframe["time"].astype("datetime64[s]").astype("int64").to_numpy(copy=False)
         ).astype(np.int64, copy=False)
 
         feature_raw: dict[str, np.ndarray] = {
             col: dataframe[col].to_numpy(dtype=np.float32, copy=False)
             for col in self.feature_columns
         }
-
-        # Pre-slice target arrays (already small — shape (target_counts, 1))
         target_lists: dict[str, list] = {
             k: v[:target_counts, 0].tolist() for k, v in target_data.items()
         }
         float_target_keys = list(target_lists.keys())
-
         seq = self.sequence_length
         stride = self.stride
 
-        with tf.io.TFRecordWriter(str(output_path), options=_TFRECORD_OPTIONS) as writer:
+        writers = [
+            tf.io.TFRecordWriter(str(p), options=_TFRECORD_OPTIONS)
+            for p in output_paths
+        ]
+        try:
             for chunk_start in range(0, target_counts, self._WRITE_CHUNK_SIZE):
                 chunk_end = min(chunk_start + self._WRITE_CHUNK_SIZE, target_counts)
-
-                # Compute the raw-row span this chunk covers.
-                # example i starts at row: i * stride
                 raw_start = chunk_start * stride
-                raw_end   = (chunk_end - 1) * stride + seq  # inclusive last row + 1
-
-                # Slice only the rows needed for this chunk — small working set.
+                raw_end = (chunk_end - 1) * stride + seq
                 time_chunk = time_raw[raw_start:raw_end]
                 feature_chunks: dict[str, np.ndarray] = {
                     col: arr[raw_start:raw_end] for col, arr in feature_raw.items()
                 }
 
                 for i, example_idx in enumerate(range(chunk_start, chunk_end)):
-                    # Local offset within the chunk slice
                     local_offset = i * stride
                     win = slice(local_offset, local_offset + seq)
-
                     features: dict[str, tf.train.Feature] = {
                         "time": tf.train.Feature(
-                            int64_list=tf.train.Int64List(
-                                value=time_chunk[win].tolist()
-                            )
+                            int64_list=tf.train.Int64List(value=time_chunk[win].tolist())
                         )
                     }
                     for col, arr in feature_chunks.items():
@@ -275,35 +271,28 @@ class GenerateTrainData:
                         )
                     for k in float_target_keys:
                         features[k] = tf.train.Feature(
-                            float_list=tf.train.FloatList(
-                                value=[target_lists[k][example_idx]]
-                            )
+                            float_list=tf.train.FloatList(value=[target_lists[k][example_idx]])
                         )
-                    writer.write(
+                    writers[example_idx % num_shards].write(
                         tf.train.Example(
                             features=tf.train.Features(feature=features)
                         ).SerializeToString()
                     )
+        finally:
+            for w in writers:
+                w.close()
 
     # ------------------------------------------------------------------ #
-    #  Sequence builder — kept for metadata/count use only               #
+    #  Sequence builder — kept for external callers only                  #
     # ------------------------------------------------------------------ #
 
     def _build_sequence_data(self, dataframe: pd.DataFrame) -> dict[str, np.ndarray | int]:
-        """
-        Only called by external code that needs the full windowed arrays.
-        The internal write path no longer uses this to avoid peak-RAM spikes.
-        """
         if len(dataframe) < self.sequence_length:
             raise ValueError(
                 f"At least {self.sequence_length} rows are required to create sequences."
             )
-
         time_values = (
-            dataframe["time"]
-            .astype("datetime64[s]")
-            .astype("int64")
-            .to_numpy(copy=False)
+            dataframe["time"].astype("datetime64[s]").astype("int64").to_numpy(copy=False)
         ).astype(np.int64, copy=False)
 
         feature_matrix = np.stack(
@@ -318,16 +307,14 @@ class GenerateTrainData:
             windowed = windowed[:: self.stride]
 
         time_windowed = self._window_array(time_values, dtype=np.int64)
-
         sequence_data: dict[str, np.ndarray | int] = {"time": time_windowed}
         for i, col in enumerate(self.feature_columns):
             sequence_data[col] = np.ascontiguousarray(windowed[:, :, i])
-
         sequence_data["num_examples"] = int(time_windowed.shape[0])
         return sequence_data
 
     # ------------------------------------------------------------------ #
-    #  Target builder — unchanged logic, consistent shapes                #
+    #  Target builder                                                     #
     # ------------------------------------------------------------------ #
 
     def _calculate_points_diff(self, price_arr1, price_arr2, points_size) -> np.ndarray:
@@ -343,7 +330,6 @@ class GenerateTrainData:
                 )
                 for col in required_cols
             }
-
             pos_prices = np.lib.stride_tricks.sliding_window_view(
                 dataframe["close"].to_numpy(), target_seq_length
             )
@@ -384,7 +370,7 @@ class GenerateTrainData:
             raise NotImplementedError("mode not implemented: use TimeBasedTarget.")
 
     # ------------------------------------------------------------------ #
-    #  Helpers — unchanged                                                #
+    #  Helpers                                                            #
     # ------------------------------------------------------------------ #
 
     def _build_data_manager(self, base_bucket_name: str) -> DataManager:
@@ -418,14 +404,14 @@ class GenerateTrainData:
         normalized = normalized.reset_index(drop=True)
         return normalized[["time", *self.BASE_FEATURE_COLUMNS]]
 
-    def _build_output_path(
+    def _build_output_dir(
         self,
         *,
         base_bucket: str,
         instrument_group: str,
         symbol_pair: str,
         version_number: int,
-        filename: str,
+        split: str,
     ) -> Path:
         return (
             self.data_directory
@@ -435,7 +421,7 @@ class GenerateTrainData:
             / symbol_pair
             / str(self.sequence_length)
             / str(version_number)
-            / filename
+            / split
         )
 
     def _window_array(self, values: np.ndarray, *, dtype: type[np.generic]) -> np.ndarray:
@@ -512,18 +498,17 @@ class GenerateTrainData:
             reverse=True,
         )
         for version_number in common_versions:
-            train_dir = train_root / str(version_number)
-            eval_dir = eval_root / str(version_number)
-            train_data_path = train_dir / "train.gz"
-            eval_data_path = eval_dir / "eval.gz"
-            train_metadata_path = train_dir / "metadata.json"
-            eval_metadata_path = eval_dir / "metadata.json"
-            if not (
-                train_data_path.exists()
-                and eval_data_path.exists()
-                and train_metadata_path.exists()
-                and eval_metadata_path.exists()
-            ):
+            train_dir = train_root / str(version_number) / "train"
+            eval_dir = eval_root / str(version_number) / "eval"
+            train_metadata_path = train_root / str(version_number) / "train" / "metadata.json"
+            eval_metadata_path = eval_root / str(version_number) / "eval" / "metadata.json"
+
+            # verify shards exist
+            train_shards = list(train_dir.glob("train_*.gz"))
+            eval_shards = list(eval_dir.glob("eval_*.gz"))
+            if not train_shards or not eval_shards:
+                continue
+            if not train_metadata_path.exists() or not eval_metadata_path.exists():
                 continue
 
             train_metadata = self._read_metadata(train_metadata_path)
@@ -531,7 +516,8 @@ class GenerateTrainData:
             if train_metadata != eval_metadata:
                 continue
             if self._metadata_matches(train_metadata, metadata):
-                return train_data_path, eval_data_path
+                return train_dir, eval_dir
+
         return None
 
     def _resolve_next_version_number(

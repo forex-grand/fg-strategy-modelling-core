@@ -205,19 +205,22 @@ class Trainer:
         return data, tf.one_hot(target, depth=3)
     
     def get_training_data(self, file_pattern: str, preprocessor: Layer):
-        data = tf.data.TFRecordDataset(file_pattern, compression_type="GZIP")
+        import glob
+        files = sorted(glob.glob(str(file_pattern) + "/train_*.gz"))
+        data = tf.data.TFRecordDataset(
+            files,
+            compression_type="GZIP",
+            buffer_size=100 * 1024 * 1024,
+            num_parallel_reads=tf.data.AUTOTUNE
+        )
         data = data.map(self.deserialize, num_parallel_calls=tf.data.AUTOTUNE)
         if self.config.shuffle_data:
-            data = data.shuffle(
-                self.config.shuffle_buffer_size, 
-                reshuffle_each_iteration=True
-            )
+            data = data.shuffle(self.config.shuffle_buffer_size, reshuffle_each_iteration=True)
         data = data.batch(self.config.batch_size, drop_remainder=True)
         data = data.map(
-            lambda x: self.preprocess(x, preprocess_layer=preprocessor), 
+            lambda x: self.preprocess(x, preprocess_layer=preprocessor),
             num_parallel_calls=tf.data.AUTOTUNE
         )
         data = data.repeat()
         data = data.prefetch(tf.data.AUTOTUNE)
         return data
-      
