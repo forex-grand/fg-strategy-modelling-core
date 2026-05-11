@@ -49,10 +49,6 @@ class TrainModel(BaseModel):
                 metrics=self._get_metrics(),
             )
 
-        # confirm model is on GPU
-        if model.weights:
-            print(f"[INFO] Model device: {model.weights[0].device}")
-
         callbacks: list[keras.callbacks.Callback] = [
             keras.callbacks.EarlyStopping(
                 monitor="val_loss",
