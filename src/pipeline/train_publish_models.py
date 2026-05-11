@@ -15,7 +15,7 @@ def train_publish_models(preprocess_class:PreprocessBase, target_model:TARGET_MO
     SymbolIn(symbol="XAUUSD", group="metals"),
 ]
 
-  train_model_types = ['simple-ns','conservative-ns','complex-ns','lstm','cnn-bi-lstm']
+  train_model_types = ['lstm','cnn-bi-lstm','simple-ns','conservative-ns','complex-ns']
 
   trainer = TR(symbols=symbols,sequence_length=sequence_length, model_types=train_model_types,
             preprocessor_class=preprocess_class, target_model_type=target_model, run_performance_test=run_performance_test)
