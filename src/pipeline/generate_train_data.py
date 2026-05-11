@@ -195,7 +195,7 @@ class GenerateTrainData:
         return output_path
 
     # ------------------------------------------------------------------ #
-    #  Core write path — optimized                                        #
+    #  Core write path — streaming, no full-dataset materialisation       #
     # ------------------------------------------------------------------ #
 
     def _write_examples(
@@ -205,51 +205,79 @@ class GenerateTrainData:
         *,
         output_path: Path,
     ) -> None:
-        sequence_data = self._build_sequence_data(dataframe)
+        # Count examples without building any arrays yet.
+        num_examples = self._count_examples(dataframe)
 
-        target_data, _counts = {}, None
+        target_data: dict[str, np.ndarray] = {}
+        target_counts = num_examples
         if self.target_model:
             target_data, _counts = self._build_target_data(
                 dataframe=dataframe, symbol_properties=symbol_properties
             )
-        target_counts = (
-            min(sequence_data["num_examples"], _counts) if _counts else sequence_data["num_examples"]
-        )
+            target_counts = min(num_examples, _counts)
 
-        # --- Build a flat dict of all arrays, sliced to target_counts ---
-        all_arrays: dict[str, np.ndarray] = {}
-        for k, v in sequence_data.items():
-            if k == "num_examples":
-                continue
-            all_arrays[k] = v[:target_counts]
-        for k, v in target_data.items():
-            all_arrays[k] = v[:target_counts]
-
-        # --- Pre-convert ALL arrays to Python lists ONCE (avoids per-row .tolist()) ---
-        # Shape per key: (target_counts, seq_len) for sequences, (target_counts, 1) for targets.
-        pre_converted: dict[str, list] = {k: v.tolist() for k, v in all_arrays.items()}
-
-        # Separate time key for int64 vs float32 branching (done once, not per example)
-        time_rows = pre_converted.pop("time")
-        float_items = list(pre_converted.items())  # [(col, [rows...]), ...]
-
-        print("Examples:", sequence_data["num_examples"], " Targets:", target_counts)
-
+        print("Examples:", num_examples, " Targets:", target_counts)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Pre-extract raw 1-D numpy arrays from the dataframe — zero-copy views.
+        # We slide a window manually per chunk so we never hold all windows in RAM.
+        time_raw = (
+            dataframe["time"]
+            .astype("datetime64[s]")
+            .astype("int64")
+            .to_numpy(copy=False)
+        ).astype(np.int64, copy=False)
+
+        feature_raw: dict[str, np.ndarray] = {
+            col: dataframe[col].to_numpy(dtype=np.float32, copy=False)
+            for col in self.feature_columns
+        }
+
+        # Pre-slice target arrays (already small — shape (target_counts, 1))
+        target_lists: dict[str, list] = {
+            k: v[:target_counts, 0].tolist() for k, v in target_data.items()
+        }
+        float_target_keys = list(target_lists.keys())
+
+        seq = self.sequence_length
+        stride = self.stride
+
         with tf.io.TFRecordWriter(str(output_path), options=_TFRECORD_OPTIONS) as writer:
-            # --- Chunked loop: reduces Python GC pressure on huge datasets ---
             for chunk_start in range(0, target_counts, self._WRITE_CHUNK_SIZE):
                 chunk_end = min(chunk_start + self._WRITE_CHUNK_SIZE, target_counts)
-                for index in range(chunk_start, chunk_end):
+
+                # Compute the raw-row span this chunk covers.
+                # example i starts at row: i * stride
+                raw_start = chunk_start * stride
+                raw_end   = (chunk_end - 1) * stride + seq  # inclusive last row + 1
+
+                # Slice only the rows needed for this chunk — small working set.
+                time_chunk = time_raw[raw_start:raw_end]
+                feature_chunks: dict[str, np.ndarray] = {
+                    col: arr[raw_start:raw_end] for col, arr in feature_raw.items()
+                }
+
+                for i, example_idx in enumerate(range(chunk_start, chunk_end)):
+                    # Local offset within the chunk slice
+                    local_offset = i * stride
+                    win = slice(local_offset, local_offset + seq)
+
                     features: dict[str, tf.train.Feature] = {
                         "time": tf.train.Feature(
-                            int64_list=tf.train.Int64List(value=time_rows[index])
+                            int64_list=tf.train.Int64List(
+                                value=time_chunk[win].tolist()
+                            )
                         )
                     }
-                    for col, rows in float_items:
+                    for col, arr in feature_chunks.items():
                         features[col] = tf.train.Feature(
-                            float_list=tf.train.FloatList(value=rows[index])
+                            float_list=tf.train.FloatList(value=arr[win].tolist())
+                        )
+                    for k in float_target_keys:
+                        features[k] = tf.train.Feature(
+                            float_list=tf.train.FloatList(
+                                value=[target_lists[k][example_idx]]
+                            )
                         )
                     writer.write(
                         tf.train.Example(
@@ -258,10 +286,14 @@ class GenerateTrainData:
                     )
 
     # ------------------------------------------------------------------ #
-    #  Sequence builder — single-pass windowing across all columns        #
+    #  Sequence builder — kept for metadata/count use only               #
     # ------------------------------------------------------------------ #
 
     def _build_sequence_data(self, dataframe: pd.DataFrame) -> dict[str, np.ndarray | int]:
+        """
+        Only called by external code that needs the full windowed arrays.
+        The internal write path no longer uses this to avoid peak-RAM spikes.
+        """
         if len(dataframe) < self.sequence_length:
             raise ValueError(
                 f"At least {self.sequence_length} rows are required to create sequences."
@@ -274,18 +306,13 @@ class GenerateTrainData:
             .to_numpy(copy=False)
         ).astype(np.int64, copy=False)
 
-        # Stack all feature columns into a single 2-D array, then window once.
-        # This replaces N separate sliding_window_view calls with one call.
         feature_matrix = np.stack(
             [dataframe[col].to_numpy(dtype=np.float32, copy=False) for col in self.feature_columns],
             axis=1,
-        )  # (N, num_features)
-
-        # sliding_window_view over a 2-D array produces shape
-        # (N - seq_len + 1, 1, seq_len, num_features) — squeeze axis 1.
+        )
         windowed = np.lib.stride_tricks.sliding_window_view(
             feature_matrix, (self.sequence_length, feature_matrix.shape[1])
-        )[:, 0, :, :]  # (windows, seq_len, num_features)
+        )[:, 0, :, :]
 
         if self.stride > 1:
             windowed = windowed[:: self.stride]
@@ -294,7 +321,6 @@ class GenerateTrainData:
 
         sequence_data: dict[str, np.ndarray | int] = {"time": time_windowed}
         for i, col in enumerate(self.feature_columns):
-            # Extract column slice and ensure C-contiguous layout for fast .tolist()
             sequence_data[col] = np.ascontiguousarray(windowed[:, :, i])
 
         sequence_data["num_examples"] = int(time_windowed.shape[0])
@@ -460,169 +486,4 @@ class GenerateTrainData:
         }
 
     def _find_existing_version_paths(
-        self,
-        *,
-        symbol_pair: str,
-        instrument_group: str,
-        metadata: dict[str, object],
-    ) -> Optional[tuple[Path, Path]]:
-        train_root = self._build_version_root(
-            base_bucket=self.train_base_bucket,
-            instrument_group=instrument_group,
-            symbol_pair=symbol_pair,
-        )
-        eval_root = self._build_version_root(
-            base_bucket=self.eval_base_bucket,
-            instrument_group=instrument_group,
-            symbol_pair=symbol_pair,
-        )
-        if not train_root.exists() or not eval_root.exists():
-            return None
-
-        common_versions = sorted(
-            set(self._list_version_numbers(train_root)).intersection(
-                self._list_version_numbers(eval_root)
-            ),
-            reverse=True,
-        )
-        for version_number in common_versions:
-            train_dir = train_root / str(version_number)
-            eval_dir = eval_root / str(version_number)
-            train_data_path = train_dir / "train.gz"
-            eval_data_path = eval_dir / "eval.gz"
-            train_metadata_path = train_dir / "metadata.json"
-            eval_metadata_path = eval_dir / "metadata.json"
-            if not (
-                train_data_path.exists()
-                and eval_data_path.exists()
-                and train_metadata_path.exists()
-                and eval_metadata_path.exists()
-            ):
-                continue
-
-            train_metadata = self._read_metadata(train_metadata_path)
-            eval_metadata = self._read_metadata(eval_metadata_path)
-            if train_metadata != eval_metadata:
-                continue
-            if self._metadata_matches(train_metadata, metadata):
-                return train_data_path, eval_data_path
-        return None
-
-    def _resolve_next_version_number(
-        self,
-        *,
-        symbol_pair: str,
-        instrument_group: str,
-    ) -> int:
-        train_root = self._build_version_root(
-            base_bucket=self.train_base_bucket,
-            instrument_group=instrument_group,
-            symbol_pair=symbol_pair,
-        )
-        eval_root = self._build_version_root(
-            base_bucket=self.eval_base_bucket,
-            instrument_group=instrument_group,
-            symbol_pair=symbol_pair,
-        )
-        version_numbers = (
-            self._list_version_numbers(train_root) + self._list_version_numbers(eval_root)
-        )
-        return (max(version_numbers) + 1) if version_numbers else 1
-
-    def _build_version_root(
-        self,
-        *,
-        base_bucket: str,
-        instrument_group: str,
-        symbol_pair: str,
-    ) -> Path:
-        return (
-            self.data_directory
-            / base_bucket
-            / self.train_data_manager.data_source
-            / instrument_group
-            / symbol_pair
-            / str(self.sequence_length)
-        )
-
-    @staticmethod
-    def _list_version_numbers(root: Path) -> list[int]:
-        if not root.exists():
-            return []
-        versions: list[int] = []
-        for child in root.iterdir():
-            if child.is_dir() and child.name.isdigit():
-                versions.append(int(child.name))
-        return sorted(versions)
-
-    @staticmethod
-    def _read_metadata(metadata_path: Path) -> dict[str, object]:
-        with metadata_path.open("r", encoding="utf-8") as file_handle:
-            return json.load(file_handle)
-
-    @staticmethod
-    def _write_metadata(metadata_path: Path, metadata: dict[str, object]) -> None:
-        metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        with metadata_path.open("w", encoding="utf-8") as file_handle:
-            json.dump(metadata, file_handle, indent=2)
-
-    @staticmethod
-    def _metadata_matches(
-        existing_metadata: dict[str, object],
-        current_metadata: dict[str, object],
-    ) -> bool:
-        keys_to_match = {
-            "data_source",
-            "instrument_group",
-            "symbol_pair",
-            "timeframe",
-            "sequence_length",
-            "stride",
-            "feature_columns",
-            "indicator_specs",
-            "train_row_count",
-            "train_example_count",
-            "train_start_time",
-            "train_end_time",
-            "eval_row_count",
-            "eval_example_count",
-            "eval_start_time",
-            "eval_end_time",
-        }
-        return all(
-            existing_metadata.get(key) == current_metadata.get(key) for key in keys_to_match
-        )
-
-    def _count_examples(self, dataframe: pd.DataFrame) -> int:
-        return max(0, ((len(dataframe) - self.sequence_length) // self.stride) + 1)
-
-    @staticmethod
-    def _normalize_timeframe(timeframe: str) -> str:
-        normalized = timeframe.strip().lower()
-        if normalized not in GenerateTrainData.TIMEFRAME_ALIASES:
-            supported = ", ".join(sorted(GenerateTrainData.TIMEFRAME_ALIASES))
-            raise ValueError(
-                f"Unsupported timeframe '{timeframe}'. Supported values: {supported}."
-            )
-        return normalized
-
-    @staticmethod
-    def _isoformat(value: pd.Timestamp) -> str:
-        timestamp = pd.Timestamp(value)
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.tz_localize("UTC")
-        else:
-            timestamp = timestamp.tz_convert("UTC")
-        return timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    @staticmethod
-    def _timeframe_to_minutes(timeframe: str) -> int:
-        unit = timeframe[-1]
-        quantity = int(timeframe[:-1])
-        if unit == "m":
-            return quantity
-        if unit == "h":
-            return quantity * 60
-        if unit == "d":
-            return quantity * 1440
-        raise ValueError(f"Unsupported timeframe '{timeframe}'.")
+        s
