@@ -20,6 +20,7 @@ class TrainModel(BaseModel):
     ) -> None:
         super().__init__(sequence_length=sequence_length, preprocessor=preprocessor)
         self.history: keras.callbacks.History | None = None
+        self.strategy = tf.distribute.MirroredStrategy()
 
     @abstractmethod
     def build_model(self, input_spec: dict) -> tf.keras.Model:
@@ -37,12 +38,14 @@ class TrainModel(BaseModel):
         ]
 
     def build_train_model(self, train_ds: tf.data.Dataset, eval_ds: tf.data.Dataset, fn_args: ModelBuildTrainArguments) -> keras.Model:
-        model = self.build_model(input_spec=train_ds.element_spec[0])
-        model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
-            loss=keras.losses.CategoricalCrossentropy(),
-            metrics=self._get_metrics(),
-        )
+        with self.strategy.scope():
+            model = self.build_model(input_spec=train_ds.element_spec[0])
+
+            model.compile(
+                optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
+                loss=keras.losses.CategoricalCrossentropy(),
+                metrics=self._get_metrics(),
+            )
 
         callbacks: list[keras.callbacks.Callback] = [
             keras.callbacks.EarlyStopping(
@@ -61,16 +64,18 @@ class TrainModel(BaseModel):
             verbose=1,
         )
 
-        inputs = {inp.name: inp for inp in self._build_input_signature()}
-        preprocess = self.preprocessor(inputs)
-        inference = model(preprocess)
-        output = keras.layers.Lambda(lambda x: tf.argmax(x, axis=-1))(inference)
-        self.model = keras.Model(inputs, output)
-        self.model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
-            loss=keras.losses.CategoricalCrossentropy(),
-            metrics=self._get_metrics(),
-        )
+        # Build inference model inside strategy scope
+        with self.strategy.scope():
+            inputs = {inp.name: inp for inp in self._build_input_signature()}
+            preprocess = self.preprocessor(inputs)
+            inference = model(preprocess)
+            output = keras.layers.Lambda(lambda x: tf.argmax(x, axis=-1))(inference)
+            self.model = keras.Model(inputs, output)
+            self.model.compile(
+                optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
+                loss=keras.losses.CategoricalCrossentropy(),
+                metrics=self._get_metrics(),
+            )
 
         return model
 
