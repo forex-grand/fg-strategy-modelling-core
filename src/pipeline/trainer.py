@@ -78,7 +78,7 @@ class Trainer:
             data_start = self.data_gen.train_properties.data_start
             data_end = self.data_gen.train_properties.data_end
 
-            print(f"Data start: {data_start}, Data End: {data_end}.")
+            
             for model_type in self.model_types:
                 results.append(self._run_single(symbol=symbol.symbol.strip().upper(),
                                                 group=symbol.group.strip().lower(),
