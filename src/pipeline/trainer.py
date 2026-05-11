@@ -9,6 +9,8 @@ import asyncio
 import pandas as pd
 import tensorflow as tf
 from keras import callbacks, metrics, optimizers, Layer
+import glob # Import glob
+import os # Import os
 
 from src.models_architecture.train_models.complex_model import ComplexNSTrainModel
 from src.models_architecture.train_models.cnn_bi_lstm import CNNBiLSTMModel
@@ -23,9 +25,9 @@ from src.models_architecture.base_model import BaseModel
 from src.models_architecture.no_train_model import NoTrainModel
 from src.models_architecture.train_models.simple_model import SimpleNSTrainModel
 from src.pipeline.performance_test import test_model_live_performance
-from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments
+from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments, EpochMetricsLogger, TrainingResult
 LOGGER = logging.getLogger(__name__)
-from src.schemas import EpochMetricsLogger, TrainingResult
+
 
 class Trainer:
     """Runs training for every (symbol, model_type) combination."""
@@ -99,9 +101,21 @@ class Trainer:
         sequence_length = int(self.sequence_length)
 
         preprocessor = self.preprocessor_class(sequence_length=sequence_length)
-        train_ds = self.get_training_data(train_path, preprocessor=preprocessor, repeat=True)
-        eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor, repeat=True)
         
+        # --- New Debug Prints for Paths and Files ---
+        print(f"DEBUG (user's code): train_path: {train_path}")
+        print(f"DEBUG (user's code): eval_path: {eval_path}")
+
+        train_files = sorted(glob.glob(os.path.join(train_path, "train_*.gz")))
+        eval_files = sorted(glob.glob(os.path.join(eval_path, "eval_*.gz")))
+
+        print(f"DEBUG (user's code): Number of train files found: {len(train_files)}")
+        print(f"DEBUG (user's code): Number of eval files found: {len(eval_files)}")
+        # --- End New Debug Prints ---
+
+        train_ds = self.get_training_data(train_path, preprocessor=preprocessor, repeat=True)
+        eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor, repeat=False)
+
 
         model_class = self.MODEL_REGISTRY[model_type]
         model: BaseModel = model_class(sequence_length=sequence_length, preprocessor=preprocessor)
@@ -125,30 +139,44 @@ class Trainer:
             raw_model = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
             model_obj = model.model
 
-            eval_values = raw_model.evaluate(eval_ds, return_dict=True, verbose=0)
-            print(f"Evaluation results for {symbol} {model_type}: {eval_values}")
-            metric_values = {
-                "accuracy": float(eval_values.get("accuracy", 0.0)),
-                # "auc": float(eval_values.get("auc", 0.0)),
-                "precision_buy": float(eval_values.get("precision_buy", 0.0)),
-                "precision_sell": float(eval_values.get("precision_sell", 0.0)),
-                "recall_buy": float(eval_values.get("recall_buy", 0.0)),
-                "recall_sell": float(eval_values.get("recall_sell", 0.0)),
-                "val_loss": float(eval_values.get("loss", 0.0)),
-                "train_loss": float(model.history.history["loss"][-1]),
-            }
+            # The original error came from raw_model.evaluate, so we will not call evaluate if eval_ds is empty
+            if tf.data.experimental.cardinality(eval_ds).numpy() > 0: 
+                eval_values = raw_model.evaluate(eval_ds, return_dict=True, verbose=0)
+                print(f"Evaluation results for {symbol} {model_type}: {eval_values}")
+                metric_values = {
+                    "accuracy": float(eval_values.get("accuracy", 0.0)),
+                    # "auc": float(eval_values.get("auc", 0.0)),
+                    "precision_buy": float(eval_values.get("precision_buy", 0.0)),
+                    "precision_sell": float(eval_values.get("precision_sell", 0.0)),
+                    "recall_buy": float(eval_values.get("recall_buy", 0.0)),
+                    "recall_sell": float(eval_values.get("recall_sell", 0.0)),
+                    "val_loss": float(eval_values.get("loss", 0.0)),
+                    "train_loss": float(model.history.history["loss"][-1]),
+                }
 
-            evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
-            if not evaluator_passed:
-                LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
-                LOGGER.warning(f"Failure Reasons: {_reason_map}")
+                evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
+                if not evaluator_passed:
+                    LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
+                    LOGGER.warning(f"Failure Reasons: {_reason_map}")
+                    return TrainingResult(
+                        symbol=symbol,
+                        model_type=model_type,
+                        benchmark_passed=True,
+                        evaluator_passed=False,
+                        model_gcs_path=None,
+                        metrics=metric_values,
+                        model=model,
+                    )
+            else:
+                print("DEBUG (user's code): eval_ds is empty, skipping raw_model.evaluate.")
+                # If eval_ds is empty, we consider the evaluator to have failed or not run.
                 return TrainingResult(
                     symbol=symbol,
                     model_type=model_type,
-                    benchmark_passed=True,
+                    benchmark_passed=False, # Mark as False because evaluation couldn't be performed
                     evaluator_passed=False,
                     model_gcs_path=None,
-                    metrics=metric_values,
+                    metrics={},
                     model=model,
                 )
 
@@ -207,7 +235,9 @@ class Trainer:
     
     def get_training_data(self, file_pattern: str, preprocessor: Layer, repeat=False):
         import glob
-        files = sorted(glob.glob(str(file_pattern) + "/train_*.gz"))
+        # Dynamically determine the file prefix from the last part of the file_pattern (directory name)
+        split_name = os.path.basename(file_pattern)
+        files = sorted(glob.glob(str(file_pattern) + f"/{split_name}_*.gz"))
         data = tf.data.TFRecordDataset(
             files,
             compression_type="GZIP",
@@ -222,6 +252,7 @@ class Trainer:
             lambda x: self.preprocess(x, preprocess_layer=preprocessor),
             num_parallel_calls=tf.data.AUTOTUNE
         )
-        data = data.repeat()
+        if repeat:
+          data = data.repeat()
         data = data.prefetch(tf.data.AUTOTUNE)
         return data
