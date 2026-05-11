@@ -324,3 +324,290 @@ class GenerateTrainData:
                 "target_value": np.expand_dims(
                     self._calculate_points_diff(
                         pos_prices,
+                        target_sequences["close"][self.sequence_length :: self.stride, -1],
+                        points,
+                    ).astype("float32"), axis=-1,
+                ),
+            }
+            print("target_highest shape:", target_cols["target_highest"].shape)
+            return target_cols, pos_prices.shape[0]
+
+        elif isinstance(self.target_model, PointsBasedTarget):
+            raise NotImplementedError("mode not implemented: use TimeBasedTarget.")
+
+    # ------------------------------------------------------------------ #
+    #  Helpers                                                            #
+    # ------------------------------------------------------------------ #
+
+    def _build_data_manager(self, base_bucket_name: str) -> DataManager:
+        return DataManager(base_bucket_name=base_bucket_name)
+
+    def _prepare_feature_frame(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        normalized_frame = self._prepare_dataframe(dataframe)
+        if len(normalized_frame) < self.sequence_length:
+            raise ValueError(
+                f"At least {self.sequence_length} rows are required to create sequences."
+            )
+        return normalized_frame
+
+    def _prepare_dataframe(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        normalized = (
+            dataframe.reset_index()
+            if "time" not in dataframe.columns and dataframe.index.name == "time"
+            else dataframe.copy()
+        )
+        required_columns = {"time", *self.BASE_FEATURE_COLUMNS}
+        missing_columns = required_columns.difference(normalized.columns)
+        if missing_columns:
+            missing_list = ", ".join(sorted(missing_columns))
+            raise ValueError(f"Dataframe is missing required columns: {missing_list}.")
+
+        normalized["time"] = pd.to_datetime(normalized["time"], errors="coerce")
+        if normalized["time"].isna().any():
+            raise ValueError("The 'time' column contains invalid datetime values.")
+
+        normalized = normalized.sort_values("time").drop_duplicates(subset="time", keep="last")
+        normalized = normalized.reset_index(drop=True)
+        return normalized[["time", *self.BASE_FEATURE_COLUMNS]]
+
+    def _build_output_dir(self, *, base_bucket, instrument_group, symbol_pair, version_number, split) -> Path:
+        return (
+            self.data_directory
+            / base_bucket
+            / self.train_data_manager.data_source
+            / instrument_group
+            / symbol_pair
+            / str(self.sequence_length)
+            / str(version_number)
+            / split
+        )
+
+    def _window_array(self, values: np.ndarray, *, dtype: type[np.generic]) -> np.ndarray:
+        windows = np.lib.stride_tricks.sliding_window_view(values, self.sequence_length)
+        if self.stride > 1:
+            windows = windows[:: self.stride]
+        return np.ascontiguousarray(windows, dtype=dtype)
+
+    def _build_tf_example(self, sequence_features: dict[str, np.ndarray]) -> tf.train.Example:
+        features: dict[str, tf.train.Feature] = {}
+        for column_name, values in sequence_features.items():
+            if column_name == "time":
+                features[column_name] = tf.train.Feature(
+                    int64_list=tf.train.Int64List(value=values.tolist())
+                )
+            else:
+                features[column_name] = tf.train.Feature(
+                    float_list=tf.train.FloatList(value=values.tolist())
+                )
+        return tf.train.Example(features=tf.train.Features(feature=features))
+
+    def _build_metadata(self, *, symbol_pair, instrument_group, train_frame, eval_frame) -> dict:
+        train_examples = self._count_examples(train_frame)
+        eval_examples = self._count_examples(eval_frame)
+        return {
+            "data_source": self.train_data_manager.data_source,
+            "instrument_group": instrument_group,
+            "symbol_pair": symbol_pair,
+            "sequence_length": self.sequence_length,
+            "stride": self.stride,
+            "feature_columns": list(self.feature_columns),
+            "train_row_count": int(len(train_frame)),
+            "train_example_count": train_examples,
+            "train_start_time": self._isoformat(train_frame["time"].iloc[0]),
+            "train_end_time": self._isoformat(train_frame["time"].iloc[-1]),
+            "eval_row_count": int(len(eval_frame)),
+            "eval_example_count": eval_examples,
+            "eval_start_time": self._isoformat(eval_frame["time"].iloc[0]),
+            "eval_end_time": self._isoformat(eval_frame["time"].iloc[-1]),
+        }
+
+    def _find_existing_version_paths(self, *, symbol_pair, instrument_group, metadata):
+        train_root = self._build_version_root(
+            base_bucket=self.train_base_bucket,
+            instrument_group=instrument_group, symbol_pair=symbol_pair,
+        )
+        eval_root = self._build_version_root(
+            base_bucket=self.eval_base_bucket,
+            instrument_group=instrument_group, symbol_pair=symbol_pair,
+        )
+        if not train_root.exists() or not eval_root.exists():
+            return None
+
+        common_versions = sorted(
+            set(self._list_version_numbers(train_root)).intersection(
+                self._list_version_numbers(eval_root)
+            ),
+            reverse=True,
+        )
+        for version_number in common_versions:
+            train_dir = train_root / str(version_number) / "train"
+            eval_dir = eval_root / str(version_number) / "eval"
+            train_metadata_path = train_dir / "metadata.json"
+            eval_metadata_path = eval_dir / "metadata.json"
+
+            train_shards = list(train_dir.glob("train_*.gz"))
+            eval_shards = list(eval_dir.glob("eval_*.gz"))
+            if not train_shards or not eval_shards:
+                continue
+            if not train_metadata_path.exists() or not eval_metadata_path.exists():
+                continue
+
+            train_metadata = self._read_metadata(train_metadata_path)
+            eval_metadata = self._read_metadata(eval_metadata_path)
+            if train_metadata != eval_metadata:
+                continue
+            if self._metadata_matches(train_metadata, metadata):
+                return train_dir, eval_dir
+
+        return None
+
+    def _resolve_next_version_number(self, *, symbol_pair, instrument_group) -> int:
+        train_root = self._build_version_root(
+            base_bucket=self.train_base_bucket,
+            instrument_group=instrument_group, symbol_pair=symbol_pair,
+        )
+        eval_root = self._build_version_root(
+            base_bucket=self.eval_base_bucket,
+            instrument_group=instrument_group, symbol_pair=symbol_pair,
+        )
+        version_numbers = (
+            self._list_version_numbers(train_root) + self._list_version_numbers(eval_root)
+        )
+        return (max(version_numbers) + 1) if version_numbers else 1
+
+    def _build_version_root(self, *, base_bucket, instrument_group, symbol_pair) -> Path:
+        return (
+            self.data_directory
+            / base_bucket
+            / self.train_data_manager.data_source
+            / instrument_group
+            / symbol_pair
+            / str(self.sequence_length)
+        )
+
+    @staticmethod
+    def _list_version_numbers(root: Path) -> list[int]:
+        if not root.exists():
+            return []
+        versions: list[int] = []
+        for child in root.iterdir():
+            if child.is_dir() and child.name.isdigit():
+                versions.append(int(child.name))
+        return sorted(versions)
+
+    @staticmethod
+    def _read_metadata(metadata_path: Path) -> dict:
+        with metadata_path.open("r", encoding="utf-8") as fh:
+            return json.load(fh)
+
+    @staticmethod
+    def _write_metadata(metadata_path: Path, metadata: dict) -> None:
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        with metadata_path.open("w", encoding="utf-8") as fh:
+            json.dump(metadata, fh, indent=2)
+
+    @staticmethod
+    def _metadata_matches(existing_metadata: dict, current_metadata: dict) -> bool:
+        keys_to_match = {
+            "data_source", "instrument_group", "symbol_pair", "timeframe",
+            "sequence_length", "stride", "feature_columns", "indicator_specs",
+            "train_row_count", "train_example_count", "train_start_time", "train_end_time",
+            "eval_row_count", "eval_example_count", "eval_start_time", "eval_end_time",
+        }
+        return all(
+            existing_metadata.get(key) == current_metadata.get(key) for key in keys_to_match
+        )
+
+    def _count_examples(self, dataframe: pd.DataFrame) -> int:
+        return max(0, ((len(dataframe) - self.sequence_length) // self.stride) + 1)
+
+    @staticmethod
+    def _normalize_timeframe(timeframe: str) -> str:
+        normalized = timeframe.strip().lower()
+        if normalized not in GenerateTrainData.TIMEFRAME_ALIASES:
+            supported = ", ".join(sorted(GenerateTrainData.TIMEFRAME_ALIASES))
+            raise ValueError(f"Unsupported timeframe '{timeframe}'. Supported values: {supported}.")
+        return normalized
+
+    @staticmethod
+    def _isoformat(value: pd.Timestamp) -> str:
+        timestamp = pd.Timestamp(value)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize("UTC")
+        else:
+            timestamp = timestamp.tz_convert("UTC")
+        return timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    @staticmethod
+    def _timeframe_to_minutes(timeframe: str) -> int:
+        unit = timeframe[-1]
+        quantity = int(timeframe[:-1])
+        if unit == "m":
+            return quantity
+        if unit == "h":
+            return quantity * 60
+        if unit == "d":
+            return quantity * 1440
+        raise ValueError(f"Unsupported timeframe '{timeframe}'.")
+
+
+# ------------------------------------------------------------------ #
+#  Module-level helpers (must be top-level for pickling by workers)   #
+# ------------------------------------------------------------------ #
+
+def _partition_into_shards(total: int, num_shards: int) -> list[range]:
+    """Divide [0, total) into num_shards roughly equal contiguous ranges."""
+    base, remainder = divmod(total, num_shards)
+    ranges = []
+    start = 0
+    for i in range(num_shards):
+        end = start + base + (1 if i < remainder else 0)
+        ranges.append(range(start, end))
+        start = end
+    return ranges
+
+
+def _write_shard_worker(args: tuple) -> None:
+    """
+    Top-level function (required for ProcessPoolExecutor pickling).
+    Builds and writes all TFExamples for a single shard.
+    """
+    (
+        shard_idx,
+        output_path,
+        example_range,
+        time_raw,
+        feature_raw,
+        target_lists,
+        seq,
+        stride,
+        feature_cols,
+    ) = args
+
+    import tensorflow as tf  # re-import in worker process
+
+    options = tf.io.TFRecordOptions(compression_type="GZIP", compression_level=1)
+
+    with tf.io.TFRecordWriter(output_path, options=options) as writer:
+        for example_idx in example_range:
+            raw_offset = example_idx * stride
+            win = slice(raw_offset, raw_offset + seq)
+
+            features: dict[str, tf.train.Feature] = {
+                "time": tf.train.Feature(
+                    int64_list=tf.train.Int64List(value=time_raw[win].tolist())
+                )
+            }
+            for col in feature_cols:
+                features[col] = tf.train.Feature(
+                    float_list=tf.train.FloatList(value=feature_raw[col][win].tolist())
+                )
+            for k, vals in target_lists.items():
+                features[k] = tf.train.Feature(
+                    float_list=tf.train.FloatList(value=[vals[example_idx]])
+                )
+            writer.write(
+                tf.train.Example(
+                    features=tf.train.Features(feature=features)
+                ).SerializeToString()
+            )
