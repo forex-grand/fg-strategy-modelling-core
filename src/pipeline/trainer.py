@@ -184,116 +184,21 @@ class Trainer:
             model_id= model_id,
         )
 
-    # def deserialize(self, data):
-    #     return tf.io.parse_example(data, features={
-    #         'time':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.int64),
-    #         'open':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-    #         'high':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-    #         'close':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-    #         'low':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-    #         'spread':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-    #         'real_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-    #         'tick_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-    #         'target_value':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
-    #         'target_highest':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
-    #         'target_lowest':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
-    #     })
-
     def deserialize(self, data):
+        return tf.io.parse_example(data, features={
+            'time':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.int64),
+            'open':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+            'high':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+            'close':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+            'low':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+            'spread':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+            'real_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+            'tick_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+            'target_value':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
+            'target_highest':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
+            'target_lowest':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
+        })
 
-        parsed = tf.io.parse_example(
-            data,
-            features={
-                "time": tf.io.FixedLenFeature([], tf.string),
-                "features": tf.io.FixedLenFeature([], tf.string),
-                "target_value": tf.io.FixedLenFeature([], tf.string),
-                "target_highest": tf.io.FixedLenFeature([], tf.string),
-                "target_lowest": tf.io.FixedLenFeature([], tf.string),
-            },
-        )
-
-        # =========================================================
-        # deserialize tensors
-        # =========================================================
-
-        time = tf.io.parse_tensor(
-            parsed["time"],
-            out_type=tf.int64,
-        )
-
-        features = tf.io.parse_tensor(
-            parsed["features"],
-            out_type=tf.float32,
-        )
-
-        target_value = tf.io.parse_tensor(
-            parsed["target_value"],
-            out_type=tf.float32,
-        )
-
-        target_highest = tf.io.parse_tensor(
-            parsed["target_highest"],
-            out_type=tf.float32,
-        )
-
-        target_lowest = tf.io.parse_tensor(
-            parsed["target_lowest"],
-            out_type=tf.float32,
-        )
-
-        # =========================================================
-        # restore static shapes
-        # VERY IMPORTANT
-        # =========================================================
-
-        time = tf.ensure_shape(
-            time,
-            [None, self.sequence_length],
-        )
-
-        features = tf.ensure_shape(
-            features,
-            [
-                None,
-                self.sequence_length,
-                7,
-            ],
-        )
-
-        target_value = tf.ensure_shape(
-            target_value,
-            [None, 1],
-        )
-
-        target_highest = tf.ensure_shape(
-            target_highest,
-            [None, 1],
-        )
-
-        target_lowest = tf.ensure_shape(
-            target_lowest,
-            [None, 1],
-        )
-
-        # =========================================================
-        # split features back out if needed
-        # =========================================================
-
-        return {
-            "time": time,
-
-            "open": features[:, :, 0],
-            "close": features[:, :, 1],
-            "high": features[:, :, 2],
-            "low": features[:, :, 3],
-            "real_volume": features[:, :, 4],
-            "spread": features[:, :, 5],
-            "tick_volume": features[:, :, 6],
-
-            "target_value": target_value,
-            "target_highest": target_highest,
-            "target_lowest": target_lowest,
-          }
     def preprocess(self, data, preprocess_layer: Layer):
         data = preprocess_layer(data, training=True)
         target = data.pop('target')
