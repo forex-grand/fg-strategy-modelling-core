@@ -1,9 +1,12 @@
 from __future__ import annotations
+import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 from typing import Any
 
 import keras
 import tensorflow as tf
+tf.get_logger().setLevel("ERROR")
 
 from src.models_architecture.base_model import BaseModel
 from src.schemas import ModelBuildTrainArguments
