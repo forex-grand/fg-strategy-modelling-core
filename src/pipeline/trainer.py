@@ -100,7 +100,7 @@ class Trainer:
         preprocessor = self.preprocessor_class(sequence_length=sequence_length)
         train_ds = self.get_training_data(train_path, preprocessor=preprocessor)
         eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor)
-        print(eval_path)
+        
 
         model_class = self.MODEL_REGISTRY[model_type]
         model: BaseModel = model_class(sequence_length=sequence_length, preprocessor=preprocessor)
