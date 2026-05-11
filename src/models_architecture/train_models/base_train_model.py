@@ -41,8 +41,9 @@ class TrainModel(BaseModel):
         train_ds = self.strategy.experimental_distribute_dataset(train_ds)
         eval_ds = self.strategy.experimental_distribute_dataset(eval_ds)
 
+        model = self.build_model(input_spec=train_ds.element_spec[0])
+            
         with self.strategy.scope():
-            model = self.build_model(input_spec=train_ds.element_spec[0])
             model.compile(
                 optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
                 loss=keras.losses.CategoricalCrossentropy(),
