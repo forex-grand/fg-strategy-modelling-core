@@ -115,7 +115,11 @@ class Trainer:
 
             
             for model_type in self.model_types:
-                print(f"Running Test for {symbol}:{model_type}")
+                print("+++++++==================================================================++++++++++++")
+                print("+++++++==================================================================++++++++++++")
+                print("+++++++==================================================================++++++++++++")
+                print("+++++++==================================================================++++++++++++")
+                print(f"RUNNING TEST FOR {symbol}:{model_type}")
                 results.append(self._run_single(symbol=symbol.symbol.strip().upper(),
                                                 group=symbol.group.strip().lower(),
                                                 model_type=model_type,
