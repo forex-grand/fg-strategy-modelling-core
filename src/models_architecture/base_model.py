@@ -1,7 +1,7 @@
 from abc import abstractmethod
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import keras
 import tensorflow as tf
@@ -9,16 +9,18 @@ import tensorflow as tf
 from src.pipeline.preprocessing.base_preprocessor import PreprocessBase
 from src.settings import Settings
 from src.schemas import ModelBuildTrainArguments
+from xgboost import XGBClassifier
 
 class BaseModel:
     def __init__(self, sequence_length:int, preprocessor: PreprocessBase):
         self.preprocessor = preprocessor.get_transform_layer()
         self.model:tf.keras.Model = None
+        self.xgb_model: XGBClassifier = None
         self.settings = Settings()
         self.data_directory = Path(self.settings.data_directory).expanduser().resolve()
         self.history: keras.callbacks.History = None
         self.sequence_length = sequence_length
-    
+
     @abstractmethod
     def build_train_model(self, train_ds, eval_ds, fn_args:ModelBuildTrainArguments)->tf.keras.Model:
         pass
