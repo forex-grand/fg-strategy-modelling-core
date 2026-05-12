@@ -26,7 +26,20 @@ from src.models_architecture.base_model import BaseModel
 from src.models_architecture.no_train_model import NoTrainModel
 from src.models_architecture.train_models.simple_model import SimpleNSTrainModel
 from src.models_architecture.train_models.xgb_train_models.xgb_simple import XGBSimple
-
+from src.models_architecture.train_models.xgb_train_models.xgb_tiny             import XGBTiny
+from src.models_architecture.train_models.xgb_train_models.xgb_simple_shallow   import XGBSimpleShallow
+from src.models_architecture.train_models.xgb_train_models.xgb_simple_slow      import XGBSimpleSlow
+from src.models_architecture.train_models.xgb_train_models.xgb_balanced         import XGBBalanced
+from src.models_architecture.train_models.xgb_train_models.xgb_l1_regularised   import XGBL1Regularised
+from src.models_architecture.train_models.xgb_train_models.xgb_l2_regularised   import XGBL2Regularised
+from src.models_architecture.train_models.xgb_train_models.xgb_gamma_pruned     import XGBGammaPruned
+from src.models_architecture.train_models.xgb_train_models.xgb_column_sampled   import XGBColumnSampled
+from src.models_architecture.train_models.xgb_train_models.xgb_deep_trees       import XGBDeepTrees
+from src.models_architecture.train_models.xgb_train_models.xgb_high_capacity    import XGBHighCapacity
+from src.models_architecture.train_models.xgb_train_models.xgb_elastic_net      import XGBElasticNet
+from src.models_architecture.train_models.xgb_train_models.xgb_high_child_weight import XGBHighChildWeight
+from src.models_architecture.train_models.xgb_train_models.xgb_max_complex      import XGBMaxComplex
+ 
 from src.pipeline.performance_test import test_model_live_performance
 from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments, EpochMetricsLogger, TrainingResult
 LOGGER = logging.getLogger(__name__)
@@ -43,6 +56,22 @@ class Trainer:
         "lstm": LSTMModel,
         "cnn-bi-lstm": CNNBiLSTMModel,
         'xgb-simple':XGBSimple,
+        'xgb-tiny'           : XGBTiny,
+        'xgb-simple-shallow' : XGBSimpleShallow,
+        'xgb-simple-slow'    : XGBSimpleSlow,
+        # ── Tier 2 · Moderate ────────────────────────────
+        'xgb-balanced'       : XGBBalanced,
+        'xgb-l1-regularised' : XGBL1Regularised,
+        'xgb-l2-regularised' : XGBL2Regularised,
+        'xgb-gamma-pruned'   : XGBGammaPruned,
+        # ── Tier 3 · Advanced ────────────────────────────
+        'xgb-column-sampled' : XGBColumnSampled,
+        'xgb-deep-trees'     : XGBDeepTrees,
+        'xgb-high-capacity'  : XGBHighCapacity,
+        # ── Tier 4 · Complex ─────────────────────────────
+        'xgb-elastic-net'    : XGBElasticNet,
+        'xgb-high-child-weight': XGBHighChildWeight,
+        'xgb-max-complex'    : XGBMaxComplex,
     }
 
     def __init__(
