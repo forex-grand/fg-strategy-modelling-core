@@ -14,9 +14,9 @@ import zipfile
 from src.settings import Settings
 from src.models_architecture.base_model import BaseModel
 from src.storage.utils import getStorageClient
+import re
 
 LOGGER = logging.getLogger(__name__)
-
 
 class ModelPusher:
     """Persists models and metadata under required GCS path conventions."""
@@ -79,6 +79,18 @@ class ModelPusher:
             }
             metadata_path = local_root / "metadata.json"
             metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            
+            if re.match(r"xgb",model_type.lower()):
+                local_xgb_path = local_root / "xgboost.json"
+                if not model.xgb_model:
+                    raise ValueError("XGBoost Model object is none, can't save.")
+                model.xgb_model.save_model(local_xgb_path)
+                xgboost_object_key = f"prediction-models/{unique_identifier}/xgboost.json"
+                self.storage_client.upload_file(
+                  file_directory=str(local_xgb_path),
+                  bucket=self.storage_bucket,
+                  object_key=xgboost_object_key,
+                  )
 
             self.storage_client.upload_file(
                 file_directory=str(zip_path),
