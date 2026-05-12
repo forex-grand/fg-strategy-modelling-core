@@ -6,6 +6,17 @@ from xgboost import XGBClassifier
 from abc import abstractmethod
 import numpy as np
 
+_COMMON = dict(
+    objective="multi:softmax",
+    num_class=3,
+    use_label_encoder=False,
+    random_state=42,
+    tree_method="hist",
+    eval_metric="mlogloss",
+    verbosity=0,
+)
+
+
 class XGBTrainModel(BaseModel):
     """
       The model on the base model object is the preprocessing model object that outputs an array of numpy.
