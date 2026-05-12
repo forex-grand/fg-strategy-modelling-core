@@ -1,7 +1,7 @@
 from src.models_architecture.base_xgb_model import XGBTrainModel
 from xgboost import XGBClassifier
 
-def XGBSimple(XGBTrainModel):
+class XGBSimple(XGBTrainModel):
     def __init__(self, preprocessor, sequence_length: int):
         super().__init__(sequence_length=sequence_length, preprocessor=preprocessor)
         self.sequence_length = sequence_length

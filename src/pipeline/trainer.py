@@ -25,6 +25,8 @@ from src.pipeline.pusher import ModelPusher
 from src.models_architecture.base_model import BaseModel
 from src.models_architecture.no_train_model import NoTrainModel
 from src.models_architecture.train_models.simple_model import SimpleNSTrainModel
+from src.models_architecture.train_models.xgb_train_models.xgb_simple import XGBSimple
+
 from src.pipeline.performance_test import test_model_live_performance
 from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments, EpochMetricsLogger, TrainingResult
 LOGGER = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ class Trainer:
         "complex-ns": ComplexNSTrainModel,
         "lstm": LSTMModel,
         "cnn-bi-lstm": CNNBiLSTMModel,
+        'xgb-simple':XGBSimple,
     }
 
     def __init__(
@@ -131,7 +134,7 @@ class Trainer:
             )
             model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
         
-        elif re.match(r"^XGB", model_type):
+        elif re.match(r"^xgb", model_type):
             model = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args={})
             metrics = model.evaluate(eval_ds)
             evaluator_passed, _reason_map = self.evaluator.evaluate(metrics)

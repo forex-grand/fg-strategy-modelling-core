@@ -4,6 +4,7 @@ import tensorflow as tf
 import keras
 from xgboost import XGBClassifier
 from abc import abstractmethod
+import numpy as np
 
 class XGBTrainModel(BaseModel):
     """
