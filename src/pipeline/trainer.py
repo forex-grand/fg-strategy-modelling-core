@@ -106,20 +106,11 @@ class Trainer:
 
         preprocessor = self.preprocessor_class(sequence_length=sequence_length)
         
-        # --- New Debug Prints for Paths and Files ---
-        print(f"DEBUG (user's code): train_path: {train_path}")
-        print(f"DEBUG (user's code): eval_path: {eval_path}")
-
         train_files = sorted(glob.glob(os.path.join(train_path, "train_*.gz")))
         eval_files = sorted(glob.glob(os.path.join(eval_path, "eval_*.gz")))
 
-        print(f"DEBUG (user's code): Number of train files found: {len(train_files)}")
-        print(f"DEBUG (user's code): Number of eval files found: {len(eval_files)}")
-        # --- End New Debug Prints ---
-
         train_ds = self.get_training_data(train_path, preprocessor=preprocessor, repeat=True)
         eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor, repeat=False)
-
 
         model_class = self.MODEL_REGISTRY[model_type]
         model: BaseModel = model_class(sequence_length=sequence_length, preprocessor=preprocessor)
@@ -135,7 +126,7 @@ class Trainer:
             model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
         
         elif re.match(r"^xgb", model_type):
-            model = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args={})
+            model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args={})
             metrics = model.evaluate(eval_ds)
             evaluator_passed, _reason_map = self.evaluator.evaluate(metrics)
             if not evaluator_passed:
