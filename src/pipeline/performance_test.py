@@ -7,6 +7,8 @@ import json
 from src.models_architecture.base_model import BaseModel
 from src.settings import Settings
 from src.pipeline.generate_train_data import GenerateTrainData
+import os
+import glob
 
 trade_managers = [
     ###fixed stop loss and take profit points
@@ -78,8 +80,12 @@ def test_model_live_performance(
         hot_reload=False
     )
 
-    load_data = tf.data.TFRecordDataset(seq_data_path, compression_type=config.tf_record_compression_type)
+    split_name = os.path.basename(seq_data_path)
+    files = sorted(glob.glob(str(seq_data_path) + f"/{split_name}_*.gz"))
+    load_data = tf.data.TFRecordDataset(files, compression_type=config.tf_record_compression_type, num_parallel_reads=tf.data.AUTOTUNE)
+    xgboost_model = model.xgb_model
     model = model.get_serving_signature()
+    
     batch_dataset = load_data.batch(128).take(-1)
 
     df_dict = {
@@ -88,8 +94,13 @@ def test_model_live_performance(
         'price': [],
     }
 
+    is_xgb = True if xgboost_model else None
+
     for batch in batch_dataset:
         predictions = model(batch)['output']
+        if is_xgb:
+            predictions = xgboost_model.predict(predictions)
+
         batch_data = tf.io.parse_example(batch, features={
             'time': tf.io.FixedLenFeature([sequence_length], tf.int64),
             'close': tf.io.FixedLenFeature([sequence_length], tf.float32)
