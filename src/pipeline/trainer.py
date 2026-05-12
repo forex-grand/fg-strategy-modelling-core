@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import logging
 from dataclasses import dataclass
 from typing import Type, List
@@ -129,6 +130,23 @@ class Trainer:
             steps_per_epoch=self.config.steps_per_epoch,
             )
             model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
+        
+        elif re.match(r"^XGB", model_type):
+            model = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args={})
+            metrics = model.evaluate(eval_ds)
+            evaluator_passed, _reason_map = self.evaluator.evaluate(metrics)
+            if not evaluator_passed:
+                LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
+                LOGGER.warning(f"Failure Reasons: {_reason_map}")
+                return TrainingResult(
+                    symbol=symbol,
+                    model_type=model_type,
+                    benchmark_passed=True,
+                    evaluator_passed=False,
+                    model_gcs_path=None,
+                    metrics=metric_values,
+                    model=model,
+                )
         else:
             fn_args = ModelBuildTrainArguments(
             learning_rate=self.config.learning_rate,
@@ -145,7 +163,6 @@ class Trainer:
                 print(f"Evaluation results for {symbol} {model_type}: {eval_values}")
                 metric_values = {
                     "accuracy": float(eval_values.get("accuracy", 0.0)),
-                    # "auc": float(eval_values.get("auc", 0.0)),
                     "precision_buy": float(eval_values.get("precision_buy", 0.0)),
                     "precision_sell": float(eval_values.get("precision_sell", 0.0)),
                     "recall_buy": float(eval_values.get("recall_buy", 0.0)),
@@ -166,19 +183,7 @@ class Trainer:
                         model_gcs_path=None,
                         metrics=metric_values,
                         model=model,
-                    )
-            else:
-                print("DEBUG (user's code): eval_ds is empty, skipping raw_model.evaluate.")
-                # If eval_ds is empty, we consider the evaluator to have failed or not run.
-                return TrainingResult(
-                    symbol=symbol,
-                    model_type=model_type,
-                    benchmark_passed=False, # Mark as False because evaluation couldn't be performed
-                    evaluator_passed=False,
-                    model_gcs_path=None,
-                    metrics={},
-                    model=model,
-                )
+                      )
 
         data_range = {
             "start": data_start,#pd.Timestamp(frame["timestamp"].min()).strftime("%Y-%m-%d"),

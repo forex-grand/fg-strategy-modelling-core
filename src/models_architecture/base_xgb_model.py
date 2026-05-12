@@ -22,6 +22,7 @@ class XGBTrainModel(BaseModel):
 
     @abstractmethod
     def build_xgb_model(self,):
+        """ Must be implemented by any xgb training version."""
         pass
 
     def evaluate(self, eval_ds):
