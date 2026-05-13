@@ -1,10 +1,12 @@
 import os
+from re import VERBOSE
 from src.models_architecture.base_model import BaseModel
 import tensorflow as tf
 import keras
 from xgboost import XGBClassifier
 from abc import abstractmethod
 import numpy as np
+from xgboost import DMatrix
 
 _COMMON = dict(
     objective="multi:softmax",
@@ -95,10 +97,29 @@ class XGBTrainModel(BaseModel):
         cardinality = train_ds.cardinality()      
         steps_per_epoch = int(os.getenv("STEPS_PER_EPOCH","-1"))
         num_batches = steps_per_epoch if steps_per_epoch>0 else (cardinality if cardinality>0 else 100)
+        print(f"Training Model now, cardinality:{cardinality}, epochs: {num_batches}")
+        train_X = []
+        train_y = []
+
         for batch_x, batch_y in train_ds.take(num_batches):
             X = np.stack([value[...,0] for value in batch_x.values()], axis=1)
             y = np.argmax(batch_y, axis=1)
-            xgb_model.fit(X, y)
-        self.xgb_model = xgb_model
+            train_X.append(X)
+            train_y.append(y)
+        
+        eval_X = []
+        eval_y = []
+        for batch_x, batch_y in eval_ds.take(num_batches):
+            X = np.stack([value[...,0] for value in batch_x.values()], axis=1)
+            y = np.argmax(batch_y, axis=1)
+            eval_X.append(X)
+            eval_y.append(y)
 
+        X = np.concatenate(train_X, axis=0)
+        y = np.concatenate(train_y, axis=0)
+        Xe = np.concatenate(eval_X, axis=0)
+        ye = np.concatenate(eval_y, axis=0)
+
+        xgb_model.fit(X, y, eval_set=[(Xe, ye)], verbose=bool(os.getenv("XGB_VERBOSE","false")))
+        self.xgb_model = xgb_model
         return self.xgb_model
