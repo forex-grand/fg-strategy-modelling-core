@@ -96,31 +96,31 @@ class XGBTrainModel(BaseModel):
         xgb_model = self.build_xgb_model()
         
         ###training loop
-        cardinality = train_ds.cardinality()      
+        cardinality = train_ds.cardinality()
         steps_per_epoch = int(os.getenv("STEPS_PER_EPOCH","-1"))
         num_batches = steps_per_epoch if steps_per_epoch>0 else (cardinality if cardinality>0 else 100)
-        train_X = []
-        train_y = []
-
-        for batch_x, batch_y in train_ds.take(num_batches):
-            X = np.stack([value[...,0] for value in batch_x.values()], axis=1)
-            y = np.argmax(batch_y, axis=1)
-            train_X.append(X)
-            train_y.append(y)
+        X = []
+        y = []
         
-        eval_X = []
-        eval_y = []
+        for batch_x, batch_y in train_ds.take(num_batches):
+            Xd = np.stack([value[...,0] for value in batch_x.values()], axis=1)
+            yd = np.argmax(batch_y, axis=1)
+            X.append(Xd)
+            y.append(yd)
+
+        Xe = []
+        ye = []
         for batch_x, batch_y in eval_ds.take(num_batches):
-            X = np.stack([value[...,0] for value in batch_x.values()], axis=1)
-            y = np.argmax(batch_y, axis=1)
-            eval_X.append(X)
-            eval_y.append(y)
+            Xd = np.stack([value[...,0] for value in batch_x.values()], axis=1)
+            yd = np.argmax(batch_y, axis=1)
+            Xe.append(Xd)
+            ye.append(yd)
 
-        X = np.concatenate(train_X, axis=0)
-        y = np.concatenate(train_y, axis=0)
-        Xe = np.concatenate(eval_X, axis=0)
-        ye = np.concatenate(eval_y, axis=0)
-
+        X = np.concatenate(X, axis=0)
+        y = np.concatenate(y, axis=0)
+        Xe = np.concatenate(Xe, axis=0)
+        ye = np.concatenate(ye, axis=0)
+        print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
         xgb_model.fit(X, y, eval_set=[(X, y),(Xe, ye),], verbose=int(os.getenv("XGB_VERBOSE","0")))
         results = xgb_model.evals_result()
         self.train_loss = results["validation_0"]["mlogloss"][-1]

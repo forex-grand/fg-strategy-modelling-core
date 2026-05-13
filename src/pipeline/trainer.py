@@ -276,6 +276,7 @@ class Trainer:
         # Dynamically determine the file prefix from the last part of the file_pattern (directory name)
         split_name = os.path.basename(file_pattern)
         files = sorted(glob.glob(str(file_pattern) + f"/{split_name}_*.gz"))
+        
         data = tf.data.TFRecordDataset(
             files,
             compression_type="GZIP",
@@ -290,7 +291,8 @@ class Trainer:
             lambda x: self.preprocess(x, preprocess_layer=preprocessor),
             num_parallel_calls=tf.data.AUTOTUNE
         )
-        # if repeat:
-        #   data = data.repeat()
+        if repeat:
+          data = data.repeat()
         data = data.prefetch(tf.data.AUTOTUNE)
+
         return data
