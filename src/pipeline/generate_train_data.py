@@ -81,18 +81,20 @@ class GenerateTrainData:
 
         bucket_manager = self._build_data_manager(bucket_name)
         _raw_frame, self.train_properties = bucket_manager.load_data(pair_name, group_name)
-        _frame = self._prepare_feature_frame(_raw_frame)
         metadata = self._build_metadata(
             symbol_pair=pair_name, instrument_group=group_name,
-            train_frame=_frame, eval_frame=_frame,
+            train_df=_raw_frame, eval_df=_raw_frame, target_type=target_model,
         )
-
-        existing_paths = self._find_existing_version_paths(
+        existing_paths = self._find_existing_version_path_single(
             symbol_pair=pair_name, instrument_group=group_name, metadata=metadata,
         )
-        if existing_paths is not None and not hot_reload:
-            return existing_paths
 
+        if existing_paths is not None and not hot_reload:
+            print("Examples in data: ",self._count_examples(_raw_frame))
+            return existing_paths
+            
+        _frame = self._prepare_feature_frame(_raw_frame)
+        
         version_number = self._resolve_next_version_number(
             symbol_pair=pair_name, instrument_group=group_name,
         )
@@ -137,6 +139,8 @@ class GenerateTrainData:
             symbol_pair=pair_name, instrument_group=group_name, metadata=metadata,
         )
         if existing_paths is not None and not hot_reload:
+            print("Train Examples in data: ",self._count_examples(train_raw_frame))
+            print("Eval Examples in data: ",self._count_examples(eval_raw_frame))
             return existing_paths
         
         train_frame = self._prepare_feature_frame(train_raw_frame)
@@ -471,6 +475,36 @@ class GenerateTrainData:
             self._list_version_numbers(train_root) + self._list_version_numbers(eval_root)
         )
         return (max(version_numbers) + 1) if version_numbers else 1
+
+    def _find_existing_version_path_single(self, *, symbol_pair, instrument_group, metadata):
+        train_root = self._build_version_root(
+            base_bucket=self.train_base_bucket,
+            instrument_group=instrument_group, symbol_pair=symbol_pair,
+        )
+
+        if not train_root.exists():
+            return None
+
+        common_versions = sorted(
+            set(self._list_version_numbers(train_root)),
+            reverse=True,
+        )
+        for version_number in common_versions:
+            train_dir = train_root / str(version_number) / "train"
+            train_metadata_path = train_dir / "metadata.json"
+
+            train_shards = list(train_dir.glob("train_*.gz"))
+            if not train_shards:
+                continue
+            if not train_metadata_path.exists():
+                continue
+
+            train_metadata = self._read_metadata(train_metadata_path)
+            
+            if self._metadata_matches(train_metadata, metadata):
+                return train_dir
+
+        return None
 
     def _build_version_root(self, *, base_bucket, instrument_group, symbol_pair) -> Path:
         return (
