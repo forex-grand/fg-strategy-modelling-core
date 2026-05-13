@@ -283,11 +283,12 @@ class Trainer:
         data = data.map(self.deserialize, num_parallel_calls=tf.data.AUTOTUNE)
         if self.config.shuffle_data:
             data = data.shuffle(self.config.shuffle_buffer_size, reshuffle_each_iteration=True)
-        data = data.batch(self.config.batch_size, drop_remainder=True)
         data = data.map(
             lambda x: self.preprocess(x, preprocess_layer=preprocessor),
             num_parallel_calls=tf.data.AUTOTUNE
         )
-
+        data = data.cache()
+        data = data.batch(self.config.batch_size, drop_remainder=True)
+        
         data = data.prefetch(tf.data.AUTOTUNE)
         return data

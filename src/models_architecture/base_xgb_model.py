@@ -59,8 +59,8 @@ class XGBTrainModel(BaseModel):
         
         num_eval_batches = cardinality if cardinality>0 else num_batches
 
-        for batch_x, batch_y in eval_ds.take(num_eval_batches).cache():
-            X = np.stack([value[...,0] for value in batch_x.values()], axis=1)
+        for batch_x, batch_y in eval_ds.take(num_eval_batches):
+            X = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             y_true = np.argmax(batch_y, axis=1)
             y_pred = self.xgb_model.predict(X)
             y_pred = tf.one_hot(y_pred, depth=3)
@@ -100,19 +100,25 @@ class XGBTrainModel(BaseModel):
         cardinality = train_ds.cardinality()
         steps_per_epoch = int(os.getenv("STEPS_PER_EPOCH","-1"))
         num_batches = steps_per_epoch if steps_per_epoch>0 else (cardinality if cardinality>0 else 100)
+        if cardinality==-2:
+            num_batches = -1
+
         X = []
         y = []
         ts = datetime.now()
-        for batch_x, batch_y in train_ds.take(num_batches).cache():
-            Xd = np.stack([value[...,0] for value in batch_x.values()], axis=1)
+        tst = next(iter(train_ds.take(1)))
+
+        for batch_x, batch_y in train_ds.take(num_batches):
+            Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = np.argmax(batch_y, axis=1)
             X.append(Xd)
             y.append(yd)
+        
         print("Training data collected: ",(datetime.now().timestamp() - ts.timestamp()),"s")
         Xe = []
         ye = []
-        for batch_x, batch_y in eval_ds.take(num_batches):
-            Xd = np.stack([value[...,0] for value in batch_x.values()], axis=1)
+        for batch_x, batch_y in eval_ds.take(num_batches):          
+            Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = np.argmax(batch_y, axis=1)
             Xe.append(Xd)
             ye.append(yd)
@@ -121,6 +127,7 @@ class XGBTrainModel(BaseModel):
         y = np.concatenate(y, axis=0)
         Xe = np.concatenate(Xe, axis=0)
         ye = np.concatenate(ye, axis=0)
+        
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
         xgb_model.fit(X, y, eval_set=[(X, y),(Xe, ye),], verbose=int(os.getenv("XGB_VERBOSE","0")))
         results = xgb_model.evals_result()
