@@ -4,7 +4,8 @@ from src.schemas import SymbolIn
 from src.pipeline.preprocessing.base_preprocessor import PreprocessBase
 
 
-def train_publish_xgb_models(preprocess_class:PreprocessBase, target_model:TARGET_MODEL_TYPES, sequence_length:int, run_performance_test: bool=True):
+def train_publish_xgb_models(preprocess_class:PreprocessBase, target_model:TARGET_MODEL_TYPES, 
+                  sequence_length:int, run_performance_test: bool=True, hot_reload: bool=True):
   symbols = [
     SymbolIn(symbol="AUDUSD", group="forex"),
     SymbolIn(symbol="EURUSD", group="forex"),
@@ -24,5 +25,7 @@ def train_publish_xgb_models(preprocess_class:PreprocessBase, target_model:TARGE
       'xgb-elastic-net', 'xgb-high-child-weight', 'xgb-max-complex',
   ]
   trainer = TR(symbols=symbols,sequence_length=sequence_length, model_types=train_model_types,
-            preprocessor_class=preprocess_class, target_model_type=target_model, run_performance_test=run_performance_test)
+            preprocessor_class=preprocess_class, target_model_type=target_model, 
+            run_performance_test=run_performance_test, hot_reload_data=hot_reload,
+            )
   results = trainer.run()
