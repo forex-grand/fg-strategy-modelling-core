@@ -58,7 +58,8 @@ class XGBTrainModel(BaseModel):
         num_batches = steps_per_epoch if steps_per_epoch>0 else (cardinality if cardinality>0 else 100)
         
         num_eval_batches = cardinality if cardinality>0 else num_batches
-
+        if cardinality==-2:
+            num_eval_batches = -1
         for batch_x, batch_y in eval_ds.take(num_eval_batches):
             X = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             y_true = np.argmax(batch_y, axis=1)
@@ -106,7 +107,6 @@ class XGBTrainModel(BaseModel):
         X = []
         y = []
         ts = datetime.now()
-        tst = next(iter(train_ds.take(1)))
 
         for batch_x, batch_y in train_ds.take(num_batches):
             Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
@@ -123,10 +123,10 @@ class XGBTrainModel(BaseModel):
             Xe.append(Xd)
             ye.append(yd)
 
-        X = np.concatenate(X, axis=0)
-        y = np.concatenate(y, axis=0)
-        Xe = np.concatenate(Xe, axis=0)
-        ye = np.concatenate(ye, axis=0)
+        X = np.concatenate(X, axis=0) if len(X)>1 else np.squeeze(X)
+        y = np.concatenate(y, axis=0) if len(y)>1 else np.squeeze(y)
+        Xe = np.concatenate(Xe, axis=0) if len(Xe)>1 else np.squeeze(Xe)
+        ye = np.concatenate(ye, axis=0) if len(ye)>1 else np.squeeze(ye)
         
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
         xgb_model.fit(X, y, eval_set=[(X, y),(Xe, ye),], verbose=int(os.getenv("XGB_VERBOSE","0")))
