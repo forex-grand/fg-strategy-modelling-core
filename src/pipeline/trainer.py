@@ -97,6 +97,8 @@ class Trainer:
         self.sequence_length = sequence_length
         self.hot_reload_data = hot_reload_data
         self.run_performance_test = run_performance_test
+        self.train_ds = {}
+        self.eval_ds  = {}
 
     def run(self) -> list[TrainingResult]:
         """Execute training for all requested model types."""
@@ -112,35 +114,36 @@ class Trainer:
             )
             data_start = self.data_gen.train_properties.data_start
             data_end = self.data_gen.train_properties.data_end
-
             
+            preprocessor = self.preprocessor_class(sequence_length=self.sequence_length)
+            symbol_string = symbol.symbol.strip().upper()
+            
+            train_ds = self.get_training_data(train_path, preprocessor=preprocessor)
+            eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor)
             for model_type in self.model_types:
                 print("+++++++==================================================================++++++++++++")
                 print("+++++++==================================================================++++++++++++")
                 print("+++++++==================================================================++++++++++++")
                 print("+++++++==================================================================++++++++++++")
                 print(f"========RUNNING TEST FOR {symbol}:{model_type}==========")
-                results.append(self._run_single(symbol=symbol.symbol.strip().upper(),
+                
+                results.append(self._run_single(preprocessor=preprocessor,
+                                                symbol=symbol.symbol.strip().upper(),
                                                 group=symbol.group.strip().lower(),
                                                 model_type=model_type,
-                                                train_path=train_path,
-                                                eval_path=eval_path,
-                                                data_start=data_start, 
+                                                train_ds=train_ds,
+                                                eval_ds=eval_ds,
+                                                data_start=data_start,
                                                 data_end=data_end),)
-
+                
         return results
 
-    def _run_single(self, symbol,group, model_type: str, train_path: str, eval_path: str,
+    def _run_single(self, preprocessor, symbol,group, model_type: str, train_ds: tf.data, eval_ds: tf.data,
                     data_start: str, data_end: str) -> TrainingResult:
         if model_type not in self.MODEL_REGISTRY:
             raise ValueError(f"Unsupported model type '{model_type}'.")
 
         sequence_length = int(self.sequence_length)
-
-        preprocessor = self.preprocessor_class(sequence_length=sequence_length)
-        
-        train_files = sorted(glob.glob(os.path.join(train_path, "train_*.gz")))
-        eval_files = sorted(glob.glob(os.path.join(eval_path, "eval_*.gz")))
 
         model_class = self.MODEL_REGISTRY[model_type]
         model: BaseModel = model_class(sequence_length=sequence_length, preprocessor=preprocessor)
@@ -148,9 +151,6 @@ class Trainer:
         metric_values = {}
         _reason_map = {}
         if model_type=="no-train":
-            train_ds = self.get_training_data(train_path, preprocessor=preprocessor, repeat=True)
-            eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor, repeat=False)
-
             fn_args = ModelBuildTrainArguments(
             learning_rate=self.config.learning_rate,
             epochs=self.config.epochs,
@@ -160,9 +160,6 @@ class Trainer:
             model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
         
         elif re.match(r"^xgb", model_type):
-            train_ds = self.get_training_data(train_path, preprocessor=preprocessor, repeat=False)
-            eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor, repeat=False)
-
             model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args={})
             metric_values = model.evaluate(eval_ds)
             evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
@@ -179,9 +176,6 @@ class Trainer:
                     model=model,
                 )
         else:
-            train_ds = self.get_training_data(train_path, preprocessor=preprocessor, repeat=True)
-            eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor, repeat=False)
-
             fn_args = ModelBuildTrainArguments(
             learning_rate=self.config.learning_rate,
             epochs=self.config.epochs,
@@ -294,8 +288,7 @@ class Trainer:
             lambda x: self.preprocess(x, preprocess_layer=preprocessor),
             num_parallel_calls=tf.data.AUTOTUNE
         )
-        if repeat:
-          data = data.repeat()
+        data = data.cache()
         data = data.prefetch(tf.data.AUTOTUNE)
 
         return data
