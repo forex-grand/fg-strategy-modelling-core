@@ -127,11 +127,10 @@ class GenerateTrainData:
 
         train_raw_frame, self.train_properties = self.train_data_manager.load_data(pair_name, group_name)
         eval_raw_frame, self.eval_properties = self.eval_data_manager.load_data(pair_name, group_name)
-        train_frame = self._prepare_feature_frame(train_raw_frame)
-        eval_frame = self._prepare_feature_frame(eval_raw_frame)
+        
         metadata = self._build_metadata(
             symbol_pair=pair_name, instrument_group=group_name,
-            train_frame=train_frame, eval_frame=eval_frame,
+            train_df=train_raw_frame, eval_df=eval_raw_frame, target_type=target_model,
         )
 
         existing_paths = self._find_existing_version_paths(
@@ -139,6 +138,9 @@ class GenerateTrainData:
         )
         if existing_paths is not None and not hot_reload:
             return existing_paths
+        
+        train_frame = self._prepare_feature_frame(train_raw_frame)
+        eval_frame = self._prepare_feature_frame(eval_raw_frame)
 
         version_number = self._resolve_next_version_number(
             symbol_pair=pair_name, instrument_group=group_name,
@@ -401,24 +403,19 @@ class GenerateTrainData:
                 )
         return tf.train.Example(features=tf.train.Features(feature=features))
 
-    def _build_metadata(self, *, symbol_pair, instrument_group, train_frame, eval_frame) -> dict:
-        train_examples = self._count_examples(train_frame)
-        eval_examples = self._count_examples(eval_frame)
+    def _build_metadata(self, *, symbol_pair, instrument_group, train_df, eval_df, target_type) -> dict:
         return {
             "data_source": self.train_data_manager.data_source,
             "instrument_group": instrument_group,
             "symbol_pair": symbol_pair,
             "sequence_length": self.sequence_length,
             "stride": self.stride,
-            "feature_columns": list(self.feature_columns),
-            "train_row_count": int(len(train_frame)),
-            "train_example_count": train_examples,
-            "train_start_time": self._isoformat(train_frame["time"].iloc[0]),
-            "train_end_time": self._isoformat(train_frame["time"].iloc[-1]),
-            "eval_row_count": int(len(eval_frame)),
-            "eval_example_count": eval_examples,
-            "eval_start_time": self._isoformat(eval_frame["time"].iloc[0]),
-            "eval_end_time": self._isoformat(eval_frame["time"].iloc[-1]),
+            "target_type": str(target_type.type),
+            "target_params": target_type.model_dump(exclude={"type"}),
+            "train_start_time": train_df["time"].iloc[0].isoformat(),
+            "train_end_time": train_df["time"].iloc[-1].isoformat(),
+            "eval_start_time": eval_df["time"].iloc[0].isoformat(),
+            "eval_end_time": eval_df["time"].iloc[-1].isoformat()
         }
 
     def _find_existing_version_paths(self, *, symbol_pair, instrument_group, metadata):
@@ -510,9 +507,9 @@ class GenerateTrainData:
     def _metadata_matches(existing_metadata: dict, current_metadata: dict) -> bool:
         keys_to_match = {
             "data_source", "instrument_group", "symbol_pair", "timeframe",
-            "sequence_length", "stride", "feature_columns", "indicator_specs",
-            "train_row_count", "train_example_count", "train_start_time", "train_end_time",
-            "eval_row_count", "eval_example_count", "eval_start_time", "eval_end_time",
+            "sequence_length", "stride", "target_type", "target_params", 
+            "train_start_time", "train_end_time",
+            "eval_start_time", "eval_end_time",
         }
         return all(
             existing_metadata.get(key) == current_metadata.get(key) for key in keys_to_match
