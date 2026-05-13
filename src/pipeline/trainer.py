@@ -146,6 +146,7 @@ class Trainer:
         model: BaseModel = model_class(sequence_length=sequence_length, preprocessor=preprocessor)
         model_obj = None
         metric_values = {}
+        _reason_map = {}
         if model_type=="no-train":
             train_ds = self.get_training_data(train_path, preprocessor=preprocessor, repeat=True)
             eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor, repeat=False)
@@ -217,7 +218,9 @@ class Trainer:
                         metrics=metric_values,
                         model=model,
                       )
-
+        LOGGER.warning("PASSED EVALUATION TEST")
+        LOGGER.warning(f"PASS RESULT: {_reason_map}")
+                
         data_range = {
             "start": data_start,#pd.Timestamp(frame["timestamp"].min()).strftime("%Y-%m-%d"),
             "end": data_end #pd.Timestamp(frame["timestamp"].max()).strftime("%Y-%m-%d"),
