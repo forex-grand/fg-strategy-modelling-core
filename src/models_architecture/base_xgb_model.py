@@ -27,6 +27,8 @@ class XGBTrainModel(BaseModel):
     def __init__(self, preprocessor, sequence_length: int):
         super().__init__(sequence_length=sequence_length, preprocessor=preprocessor)
         self.sequence_length = sequence_length
+        self.train_loss = 0.0
+        self.eval_loss  = 0.0
 
     def build_model(self, input_spec:dict[str,tf.TensorSpec]):
         inputs = {key:keras.Input(shape=(spec.shape[-1] or 1,), name=key, dtype=spec.dtype)
@@ -78,8 +80,8 @@ class XGBTrainModel(BaseModel):
             'precision_sell':precision_sell.result(),
             'recall_buy':recall_buy.result(),
             'recall_sell':recall_sell.result(),
-            'val_loss':0.0,
-            'train_loss':0.0,
+            'val_loss':self.eval_loss,
+            'train_loss':self.train_loss,
         }
         return metrics
     def build_train_model(self, train_ds, eval_ds, fn_args):
@@ -97,7 +99,6 @@ class XGBTrainModel(BaseModel):
         cardinality = train_ds.cardinality()      
         steps_per_epoch = int(os.getenv("STEPS_PER_EPOCH","-1"))
         num_batches = steps_per_epoch if steps_per_epoch>0 else (cardinality if cardinality>0 else 100)
-        print(f"Training Model now, cardinality:{cardinality}, epochs: {num_batches}")
         train_X = []
         train_y = []
 
@@ -120,6 +121,9 @@ class XGBTrainModel(BaseModel):
         Xe = np.concatenate(eval_X, axis=0)
         ye = np.concatenate(eval_y, axis=0)
 
-        xgb_model.fit(X, y, eval_set=[(Xe, ye)], verbose=bool(os.getenv("XGB_VERBOSE","false")))
+        xgb_model.fit(X, y, eval_set=[(X, y),(Xe, ye),], verbose=int(os.getenv("XGB_VERBOSE","0")))
+        results = xgb_model.evals_result()
+        self.train_loss = results["validation_0"]["mlogloss"][-1]
+        self.eval_loss  = results["validation_1"]["mlogloss"][-1]
         self.xgb_model = xgb_model
         return self.xgb_model

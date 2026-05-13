@@ -290,7 +290,7 @@ class Trainer:
             lambda x: self.preprocess(x, preprocess_layer=preprocessor),
             num_parallel_calls=tf.data.AUTOTUNE
         )
-        if repeat:
-          data = data.repeat()
+        # if repeat:
+        #   data = data.repeat()
         data = data.prefetch(tf.data.AUTOTUNE)
         return data
