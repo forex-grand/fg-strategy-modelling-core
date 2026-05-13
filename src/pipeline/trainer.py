@@ -214,7 +214,7 @@ class Trainer:
                       )
         LOGGER.warning("PASSED EVALUATION TEST")
         LOGGER.warning(f"PASS RESULT: {_reason_map}")
-                
+
         data_range = {
             "start": data_start,#pd.Timestamp(frame["timestamp"].min()).strftime("%Y-%m-%d"),
             "end": data_end #pd.Timestamp(frame["timestamp"].max()).strftime("%Y-%m-%d"),
@@ -288,7 +288,6 @@ class Trainer:
             lambda x: self.preprocess(x, preprocess_layer=preprocessor),
             num_parallel_calls=tf.data.AUTOTUNE
         )
-        data = data.cache()
-        data = data.prefetch(tf.data.AUTOTUNE)
 
+        data = data.prefetch(tf.data.AUTOTUNE)
         return data

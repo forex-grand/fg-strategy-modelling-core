@@ -7,6 +7,7 @@ from xgboost import XGBClassifier
 from abc import abstractmethod
 import numpy as np
 from xgboost import DMatrix
+from datetime import datetime
 
 _COMMON = dict(
     objective="multi:softmax",
@@ -58,7 +59,7 @@ class XGBTrainModel(BaseModel):
         
         num_eval_batches = cardinality if cardinality>0 else num_batches
 
-        for batch_x, batch_y in eval_ds.take(num_eval_batches):
+        for batch_x, batch_y in eval_ds.take(num_eval_batches).cache():
             X = np.stack([value[...,0] for value in batch_x.values()], axis=1)
             y_true = np.argmax(batch_y, axis=1)
             y_pred = self.xgb_model.predict(X)
@@ -101,13 +102,13 @@ class XGBTrainModel(BaseModel):
         num_batches = steps_per_epoch if steps_per_epoch>0 else (cardinality if cardinality>0 else 100)
         X = []
         y = []
-        
-        for batch_x, batch_y in train_ds.take(num_batches):
+        ts = datetime.now()
+        for batch_x, batch_y in train_ds.take(num_batches).cache():
             Xd = np.stack([value[...,0] for value in batch_x.values()], axis=1)
             yd = np.argmax(batch_y, axis=1)
             X.append(Xd)
             y.append(yd)
-
+        print("Training data collected: ",(datetime.now().timestamp() - ts.timestamp()),"s")
         Xe = []
         ye = []
         for batch_x, batch_y in eval_ds.take(num_batches):
