@@ -662,7 +662,6 @@ def _write_shard_worker(args: tuple) -> None:
                 prepare = {feature:tf.expand_dims(tf.constant(value), axis=0) for feature, value in features_raw.items()}
                 results = preprocess_layer(prepare)
                 features_processed = {field: value.numpy() for field,value in results.items()}
-                print(results)
 
             features: dict[str, tf.train.Feature] = {}
             for feature,value in features_processed.items():
