@@ -623,22 +623,40 @@ def _write_shard_worker(args: tuple) -> None:
         for example_idx in example_range:
             raw_offset = example_idx * stride
             win = slice(raw_offset, raw_offset + seq)
-
-            features: dict[str, tf.train.Feature] = {
-                "time": tf.train.Feature(
-                    int64_list=tf.train.Int64List(value=time_raw[win].tolist())
-                )
+            features_raw = {
+                "time":time_raw[win].tolist()
             }
             for col in feature_cols:
-                features[col] = tf.train.Feature(
-                    float_list=tf.train.FloatList(value=feature_raw[col][win].tolist())
-                )
+                features_raw[col] = feature_raw[col][win].tolist()
             for k, vals in target_lists.items():
-                features[k] = tf.train.Feature(
-                    float_list=tf.train.FloatList(value=[vals[example_idx]])
-                )
+                features_raw[k] = [vals[example_idx]]
+            
+            features_processed = {}
+
+            if self.preprocess_data:
+                
+            features: dict[str, tf.train.Feature] = {}
+            for feature,value in features_processed.items():
+                if type(value[0])==float:
+                   features[feature] = write_float_example(value)
+                elif type(value[0])==int:
+                    features[feature] = write_int_example(value)
+                elif type(value[0])==str:
+                    features[feature] = write_str_example(value)
+                else:
+                    raise Exception("Feature type cannot not be stored, feature: ",feature," type: ",type(value[0]))
+            
             writer.write(
                 tf.train.Example(
                     features=tf.train.Features(feature=features)
                 ).SerializeToString()
             )
+
+def write_float_example(vals):
+    return tf.train.Feature(float_list=tf.train.FloatList(value=vals))
+
+def write_int_example(vals):
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=vals))
+
+def write_str_example(vals):
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=vals))
