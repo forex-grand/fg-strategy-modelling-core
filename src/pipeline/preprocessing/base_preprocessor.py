@@ -45,6 +45,11 @@ class PreprocessBase(keras.layers.Layer, metaclass=abc.ABCMeta):
     def preprocess(self, inputs, training: bool = False) -> dict[str, tf.Tensor]:
         """Transform raw model inputs into downstream tensors."""
 
+    @abc.abstractmethod
+    @keras.utils.register_keras_serializable(name="Preproces_function")
+    def features_metadata(self,):
+        pass
+
     # def load_and_run_auxiliary_model(self, model_gcs_path: str, inputs: tf.Tensor) -> tf.Tensor:
     #     """
     #     Download an auxiliary model from GCS, run inference, and return output tensor.
