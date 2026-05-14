@@ -94,7 +94,7 @@ class Trainer:
         self.data_gen = GenerateTrainData(
             train_base_bucket=self.config.train_bucket_name, 
             eval_base_bucket=self.config.eval_bucket_name,
-            preprocess_data=False, 
+            preprocess_data=True, 
             preprocess_layer=self.preprocessor,
             )
         self.evaluator = Evaluator(self.config)
