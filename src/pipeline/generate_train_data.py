@@ -236,26 +236,17 @@ class GenerateTrainData:
         data_features = self.build_process_data(features_data, target_data)
         seq = self.sequence_length
         stride = self.stride
-        feature_cols = self.feature_columns
-
         # ✅ Partition examples across shards; each shard owns its example indices
         shard_index_ranges = _partition_into_shards(target_counts, num_shards)
-        preprocess_data = self.preprocess_data
-        preprocess_layer = self.preprocess_layer
+        
         # ✅ Serialize each shard's examples in parallel worker processes
         worker_args = [
             (
                 shard_idx,
                 str(output_paths[shard_idx]),
                 shard_index_ranges[shard_idx],
-                time_raw,
-                feature_raw,
-                target_lists,
+                data_features,
                 seq,
-                stride,
-                feature_cols,
-                preprocess_data,
-                preprocess_layer
             )
             for shard_idx in range(num_shards)
         ]
@@ -272,7 +263,7 @@ class GenerateTrainData:
     #  Sequence builder — kept for external callers only                  #
     # ------------------------------------------------------------------ #
     def build_process_data(self, features, targets):
-        features = {key:tf.constant(value) for key,value in features.items}
+        features = {key:tf.constant(value) for key,value in features.items()}
         for col in targets:
             features[col] = targets[col]
 
@@ -634,14 +625,8 @@ def _write_shard_worker(args: tuple) -> None:
         shard_idx,
         output_path,
         example_range,
-        time_raw,
-        feature_raw,
-        target_lists,
+        feature_data,
         seq,
-        stride,
-        feature_cols,
-        preprocess_data,
-        preprocess_layer,
     ) = args
 
     import tensorflow as tf  # re-import in worker process
@@ -650,27 +635,10 @@ def _write_shard_worker(args: tuple) -> None:
 
     with tf.io.TFRecordWriter(output_path, options=options) as writer:
         for example_idx in example_range:
-            raw_offset = example_idx * stride
-            win = slice(raw_offset, raw_offset + seq)
-            features_raw = {
-                "time":time_raw[win].tolist()
-            }
-            for col in feature_cols:
-                features_raw[col] = feature_raw[col][win].tolist()
-            for k, vals in target_lists.items():
-                features_raw[k] = [vals[example_idx]]
+            features_data = {key:tf.expand_dims(tf.squeeze(values[example_idx]), axis=0).numpy() for key, values in feature_data.items()}
+            features: dict[str, tf.train.Example] = {}
             
-            features_processed = {}
-
-            if not preprocess_data:
-                features_processed = features_raw
-            else:
-                prepare = {feature:tf.expand_dims(tf.constant(value), axis=0) for feature, value in features_raw.items()}
-                results = preprocess_layer(prepare, training=True)
-                features_processed = {field: tf.reshape(value, (-1,)).numpy() for field,value in results.items()}
-
-            features: dict[str, tf.train.Feature] = {}
-            for feature,value in features_processed.items():
+            for feature,value in features_data.items():
                 if type(value[0]) in [float,np.float32, tf.float32]:
                    features[feature] = write_float_example(value)
                 elif type(value[0]) in [int, np.int32, np.int64]:
