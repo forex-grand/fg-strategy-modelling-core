@@ -616,6 +616,8 @@ def _partition_into_shards(total: int, num_shards: int) -> list[range]:
         start = end
     return ranges
 
+def _get_features_from_feature_frame(feature_raw, target_lists):
+    pass
 
 def _write_shard_worker(args: tuple) -> None:
     """
@@ -659,15 +661,16 @@ def _write_shard_worker(args: tuple) -> None:
             else:
                 prepare = {feature:tf.expand_dims(tf.constant(value), axis=0) for feature, value in features_raw.items()}
                 results = preprocess_layer(prepare)
+                features_processed = {field: value.numpy() for field,value in results.items()}
                 print(results)
 
             features: dict[str, tf.train.Feature] = {}
             for feature,value in features_processed.items():
-                if type(value[0])==float:
+                if type(value[0]) in [float,np.float32, tf.float32]:
                    features[feature] = write_float_example(value)
-                elif type(value[0])==int:
+                elif type(value[0]) in [float, np.float32]:
                     features[feature] = write_int_example(value)
-                elif type(value[0])==str:
+                elif type(value[0]) in [str, np.string]:
                     features[feature] = write_str_example(value)
                 else:
                     raise Exception("Feature type cannot not be stored, feature: ",feature," type: ",type(value[0]))
