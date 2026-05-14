@@ -235,7 +235,7 @@ class GenerateTrainData:
         
         print("Examples:", num_examples, " Targets:", target_counts)
 
-        data_features = self.build_process_data(features_data, target_data)
+        data_features = self.build_process_data(features_data, target_data, target_counts)
         seq = self.sequence_length
         stride = self.stride
         # ✅ Partition examples across shards; each shard owns its example indices
@@ -264,11 +264,11 @@ class GenerateTrainData:
     # ------------------------------------------------------------------ #
     #  Sequence builder — kept for external callers only                  #
     # ------------------------------------------------------------------ #
-    def build_process_data(self, features, targets):
-        features = {key:tf.constant(value) for key,value in features.items()}
+    def build_process_data(self, features, targets, target_count):
+        features = {key:tf.constant(value[:target_count]) for key,value in features.items() if key != "num_examples"}
         for col in targets:
             features[col] = tf.squeeze(targets[col])
-        features.pop("num_examples")
+
         preprocessed = {}
         if not self.preprocess_data:
             preprocessed = features
