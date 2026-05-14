@@ -90,8 +90,13 @@ class Trainer:
         self.preprocessor_class = preprocessor_class
         self.target_model_type = target_model_type
         self.config = Settings()
+        self.preprocessor = preprocessor_class(sequence_length)
         self.data_gen = GenerateTrainData(
-            train_base_bucket=self.config.train_bucket_name, eval_base_bucket=self.config.eval_bucket_name)
+            train_base_bucket=self.config.train_bucket_name, 
+            eval_base_bucket=self.config.eval_bucket_name,
+            preprocess_data=False, 
+            preprocess_layer=self.preprocessor,
+            )
         self.evaluator = Evaluator(self.config)
         self.pusher = ModelPusher(self.config)
         self.sequence_length = sequence_length
@@ -104,6 +109,8 @@ class Trainer:
         """Execute training for all requested model types."""
         results: list[TrainingResult] = []
         for symbol in self.symbols:
+            preprocessor = self.preprocessor_class(sequence_length=self.sequence_length)
+            
             train_path, eval_path = self.data_gen.load_data(
                 symbol_pair=symbol.symbol.strip().upper(),
                 instrument_group=symbol.group.strip().lower(),
@@ -115,7 +122,6 @@ class Trainer:
             data_start = self.data_gen.train_properties.data_start
             data_end = self.data_gen.train_properties.data_end
             
-            preprocessor = self.preprocessor_class(sequence_length=self.sequence_length)
             symbol_string = symbol.symbol.strip().upper()
             
             train_ds = self.get_training_data(train_path, preprocessor=preprocessor)
@@ -248,23 +254,24 @@ class Trainer:
             model_id= model_id,
         )
 
-    def deserialize(self, data):
-        return tf.io.parse_example(data, features={
-            'time':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.int64),
-            'open':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-            'high':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-            'close':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-            'low':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-            'spread':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-            'real_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-            'tick_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-            'target_value':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
-            'target_highest':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
-            'target_lowest':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
-        })
+    def deserialize(self, data, preprocessor: PreprocessBase):
+        return tf.io.parse_example(data, features=preprocessor.features_metadata())
+        # return tf.io.parse_example(data, features={
+        #     'time':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.int64),
+        #     'open':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+        #     'high':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+        #     'close':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+        #     'low':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+        #     'spread':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+        #     'real_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+        #     'tick_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
+        #     'target_value':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
+        #     'target_highest':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
+        #     'target_lowest':tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
+        # })
 
     def preprocess(self, data, preprocess_layer: Layer):
-        data = preprocess_layer(data, training=True)
+        # data = preprocess_layer(data, training=True)
         target = data.pop('target')
         return data, tf.one_hot(target, depth=3)
     
@@ -280,7 +287,7 @@ class Trainer:
             buffer_size=100 * 1024 * 1024,
             num_parallel_reads=tf.data.AUTOTUNE
         )
-        data = data.map(self.deserialize, num_parallel_calls=tf.data.AUTOTUNE)
+        data = data.map(lambda x: self.deserialize(x, preprocessor), num_parallel_calls=tf.data.AUTOTUNE)
         if self.config.shuffle_data:
             data = data.shuffle(self.config.shuffle_buffer_size, reshuffle_each_iteration=True)
         data = data.map(

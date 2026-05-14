@@ -451,7 +451,8 @@ class GenerateTrainData:
             "train_start_time": train_df["time"].iloc[0].isoformat(),
             "train_end_time": train_df["time"].iloc[-1].isoformat(),
             "eval_start_time": eval_df["time"].iloc[0].isoformat(),
-            "eval_end_time": eval_df["time"].iloc[-1].isoformat()
+            "eval_end_time": eval_df["time"].iloc[-1].isoformat(),
+            "processed_data":self.preprocess_data,
         }
 
     def _find_existing_version_paths(self, *, symbol_pair, instrument_group, metadata):
@@ -653,7 +654,7 @@ def _write_shard_worker(args: tuple) -> None:
 
     with tf.io.TFRecordWriter(output_path, options=options) as writer:
         for example_idx in example_range:
-            features_data = {key:tf.expand_dims(tf.squeeze(values[example_idx]), axis=0).numpy() for key, values in feature_data.items()}
+            features_data = {key:tf.reshape(values[example_idx], shape=(-1,)).numpy() for key, values in feature_data.items()}
             features: dict[str, tf.train.Example] = {}
             
             for feature,value in features_data.items():
