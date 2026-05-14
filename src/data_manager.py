@@ -190,9 +190,10 @@ class DataManager:
         )
 
         dataframe = self._read_parquet_buffer(parquet_buffer)
+        
         self._validate_properties(properties, pair_name)
         self._validate_dataframe(dataframe, pair_name)
-        self._save_local_files(dataframe, properties, parquet_path, properties_path)
+        dataframe = self._save_local_files(dataframe, properties, parquet_path, properties_path)
         return dataframe, properties
 
     def _load_local_files(
@@ -217,6 +218,7 @@ class DataManager:
         normalized_dataframe.to_parquet(parquet_path, index=False)
         with properties_path.open("w", encoding="utf-8") as file_handle:
             json.dump(properties, file_handle, indent=2)
+        return normalized_dataframe
 
     def _build_bucket_directory(self, instrument_group: str, pair_name: str) -> str:
         return f"{self.data_source}/{instrument_group}/{pair_name}"
