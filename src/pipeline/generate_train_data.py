@@ -94,8 +94,9 @@ class GenerateTrainData:
         )
         existing_paths = self._find_existing_version_path_single(
             symbol_pair=pair_name, instrument_group=group_name, metadata=metadata,
+            bucket_name=bucket_name,
         )
-
+        
         if existing_paths is not None and not hot_reload:
             print("Examples in data: ",self._count_examples(_raw_frame))
             return existing_paths
@@ -220,7 +221,8 @@ class GenerateTrainData:
         num_shards = len(output_paths)
         output_paths[0].parent.mkdir(parents=True, exist_ok=True)
 
-        num_examples = self._count_examples(dataframe)
+        features_data = self._build_sequence_data(dataframe)
+        num_examples  = features_data['num_examples']
         target_data: dict[str, np.ndarray] = {}
         target_counts = num_examples
         if self.target_model:
@@ -228,21 +230,10 @@ class GenerateTrainData:
                 dataframe=dataframe, symbol_properties=symbol_properties
             )
             target_counts = min(num_examples, _counts)
-
+        
         print("Examples:", num_examples, " Targets:", target_counts)
 
-        time_raw = (
-            dataframe["time"].astype("datetime64[s]").astype("int64").to_numpy(copy=False)
-        ).astype(np.int64, copy=False)
-
-        feature_raw: dict[str, np.ndarray] = {
-            col: dataframe[col].to_numpy(dtype=np.float32, copy=False)
-            for col in self.feature_columns
-        }
-        target_lists: dict[str, list] = {
-            k: v[:target_counts, 0].tolist() for k, v in target_data.items()
-        }
-
+        data_features = self.build_process_data(features_data, target_data)
         seq = self.sequence_length
         stride = self.stride
         feature_cols = self.feature_columns
@@ -280,6 +271,19 @@ class GenerateTrainData:
     # ------------------------------------------------------------------ #
     #  Sequence builder — kept for external callers only                  #
     # ------------------------------------------------------------------ #
+    def build_process_data(self, features, targets):
+        features = {key:tf.constant(value) for key,value in features.items}
+        for col in targets:
+            features[col] = targets[col]
+
+        preprocessed = {}
+        if not self.preprocess_data:
+            preprocessed = features
+        else:
+            preprocessed = self.preprocess_layer(features, training=True)
+            preprocessed = {key:value.numpy() for key,value in preprocessed.items()}
+
+        return preprocessed
 
     def _build_sequence_data(self, dataframe: pd.DataFrame) -> dict[str, np.ndarray | int]:
         if len(dataframe) < self.sequence_length:
@@ -450,6 +454,7 @@ class GenerateTrainData:
             base_bucket=self.eval_base_bucket,
             instrument_group=instrument_group, symbol_pair=symbol_pair,
         )
+
         if not train_root.exists() or not eval_root.exists():
             return None
 
@@ -495,9 +500,9 @@ class GenerateTrainData:
         )
         return (max(version_numbers) + 1) if version_numbers else 1
 
-    def _find_existing_version_path_single(self, *, symbol_pair, instrument_group, metadata):
+    def _find_existing_version_path_single(self, *, symbol_pair, instrument_group, metadata, bucket_name: str):
         train_root = self._build_version_root(
-            base_bucket=self.train_base_bucket,
+            base_bucket=bucket_name,
             instrument_group=instrument_group, symbol_pair=symbol_pair,
         )
 
@@ -508,6 +513,7 @@ class GenerateTrainData:
             set(self._list_version_numbers(train_root)),
             reverse=True,
         )
+
         for version_number in common_versions:
             train_dir = train_root / str(version_number) / "train"
             train_metadata_path = train_dir / "metadata.json"
@@ -660,16 +666,16 @@ def _write_shard_worker(args: tuple) -> None:
                 features_processed = features_raw
             else:
                 prepare = {feature:tf.expand_dims(tf.constant(value), axis=0) for feature, value in features_raw.items()}
-                results = preprocess_layer(prepare)
-                features_processed = {field: value.numpy() for field,value in results.items()}
+                results = preprocess_layer(prepare, training=True)
+                features_processed = {field: tf.reshape(value, (-1,)).numpy() for field,value in results.items()}
 
             features: dict[str, tf.train.Feature] = {}
             for feature,value in features_processed.items():
                 if type(value[0]) in [float,np.float32, tf.float32]:
                    features[feature] = write_float_example(value)
-                elif type(value[0]) in [float, np.float32]:
+                elif type(value[0]) in [int, np.int32, np.int64]:
                     features[feature] = write_int_example(value)
-                elif type(value[0]) in [str, np.string]:
+                elif type(value[0]) in [str, np.strings]:
                     features[feature] = write_str_example(value)
                 else:
                     raise Exception("Feature type cannot not be stored, feature: ",feature," type: ",type(value[0]))
