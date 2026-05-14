@@ -7,6 +7,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import keras
 import os
 
 from src.data_manager import DataManager
@@ -37,6 +38,8 @@ class GenerateTrainData:
         self,
         train_base_bucket: str = "forexgrand-train",
         eval_base_bucket: str = "forexgrand-eval",
+        preprocess_data: bool = False,
+        preprocess_layer: Optional[keras.Model] = None
     ) -> None:
         self.settings = Settings()
         self.feature_columns = self.BASE_FEATURE_COLUMNS
@@ -53,6 +56,10 @@ class GenerateTrainData:
         self.target_model: TARGET_MODEL_TYPES = None
         self.train_properties: SymbolProperties = None
         self.eval_properties: SymbolProperties = None
+        if preprocess_data and not preprocess_layer:
+            raise ValueError("You need to attach a preprocess layer object if preprocess data is True.")
+        self.preprocess_data = preprocess_data
+        self.preprocess_layer = preprocess_layer
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -103,7 +110,16 @@ class GenerateTrainData:
             symbol_pair=pair_name, version_number=version_number, split="train",
         )
 
-        self.generate_train_data_examples(_frame, output_dir=output_dir)
+        # self.generate_train_data_examples(_frame, output_dir=output_dir)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {
+                pool.submit(self.generate_train_data_examples, _frame, output_dir=output_dir): "train",
+            }
+            for future in as_completed(futures):
+                split = futures[future]
+                exc = future.exception()
+                if exc:
+                    raise RuntimeError(f"{split} generation failed: {exc}") from exc
         self._write_metadata(output_dir / "metadata.json", metadata)
         return output_dir
 
@@ -233,7 +249,8 @@ class GenerateTrainData:
 
         # ✅ Partition examples across shards; each shard owns its example indices
         shard_index_ranges = _partition_into_shards(target_counts, num_shards)
-
+        preprocess_data = self.preprocess_data
+        preprocess_layer = self.preprocess_layer
         # ✅ Serialize each shard's examples in parallel worker processes
         worker_args = [
             (
@@ -246,6 +263,8 @@ class GenerateTrainData:
                 seq,
                 stride,
                 feature_cols,
+                preprocess_data,
+                preprocess_layer
             )
             for shard_idx in range(num_shards)
         ]
@@ -613,6 +632,8 @@ def _write_shard_worker(args: tuple) -> None:
         seq,
         stride,
         feature_cols,
+        preprocess_data,
+        preprocess_layer,
     ) = args
 
     import tensorflow as tf  # re-import in worker process
@@ -633,8 +654,12 @@ def _write_shard_worker(args: tuple) -> None:
             
             features_processed = {}
 
-            if self.preprocess_data:
-                
+            if not preprocess_data:
+                features_processed = features_raw
+            else:
+                results = preprocess_layer(features_raw, axis=0)
+                print(results)
+
             features: dict[str, tf.train.Feature] = {}
             for feature,value in features_processed.items():
                 if type(value[0])==float:
