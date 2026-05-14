@@ -265,14 +265,22 @@ class GenerateTrainData:
     def build_process_data(self, features, targets):
         features = {key:tf.constant(value) for key,value in features.items()}
         for col in targets:
-            features[col] = targets[col]
-
+            features[col] = tf.squeeze(targets[col])
+        features.pop("num_examples")
         preprocessed = {}
         if not self.preprocess_data:
             preprocessed = features
         else:
-            preprocessed = self.preprocess_layer(features, training=True)
-            preprocessed = {key:value.numpy() for key,value in preprocessed.items()}
+            tf_data = tf.data.Dataset.from_tensor_slices(features)
+            batch_size = int(os.getenv("BATCH_SIZE","128"))
+            tf_data = tf_data.batch(batch_size)
+            
+            processed = {}
+            ##run first batch to store keys
+            processed = self.preprocess_layer()
+            for batch in tf_data.skip(1).take(-1):
+                preprocessed = self.preprocess_layer(features, training=True)
+                preprocessed = {key:value.numpy() for key,value in preprocessed.items()}
 
         return preprocessed
 
