@@ -10,6 +10,8 @@ import tensorflow as tf
 import keras
 import os
 
+from torch import prelu
+
 from src.data_manager import DataManager
 from src.settings import Settings
 from src.schemas import TARGET_MODEL_TYPES, TimeBasedTarget, PointsBasedTarget, SymbolProperties
@@ -275,12 +277,20 @@ class GenerateTrainData:
             batch_size = int(os.getenv("BATCH_SIZE","128"))
             tf_data = tf_data.batch(batch_size)
             
-            processed = {}
+            preprocessed = {}
             ##run first batch to store keys
-            processed = self.preprocess_layer()
-            for batch in tf_data.skip(1).take(-1):
-                preprocessed = self.preprocess_layer(features, training=True)
-                preprocessed = {key:value.numpy() for key,value in preprocessed.items()}
+            first_batch_done = False
+            for batch in tf_data.take(-1):
+                processed = self.preprocess_layer(batch, training=True)
+                for key, values in processed.items():
+                    if not first_batch_done:
+                        preprocessed[key] = []
+                    preprocessed[key].append(values.numpy())
+
+                if not first_batch_done:
+                    first_batch_done = True
+
+            preprocessed = {key:np.concatenate(values) for key,values in preprocessed.items()}
 
         return preprocessed
 
