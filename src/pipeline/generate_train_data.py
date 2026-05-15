@@ -281,18 +281,21 @@ class GenerateTrainData:
             ##run first batch to store keys
             first_batch_done = False
             for batch in tf_data.take(-1):
-                processed = self.preprocess_layer(batch, training=True)
+                processed = self._preprocess_batch_data(batch)
                 for key, values in processed.items():
                     if not first_batch_done:
                         preprocessed[key] = []
-                    preprocessed[key].append(values.numpy())
+
+                    preprocessed[key] = np.concatenate([preprocessed[key],values.numpy()], axis=0)
 
                 if not first_batch_done:
                     first_batch_done = True
 
-            preprocessed = {key:np.concatenate(values) for key,values in preprocessed.items()}
-
         return preprocessed
+
+    @tf.function
+    def _preprocess_batch_data(self, data):
+        return self.preprocess_layer(data, training=True)
 
     def _build_sequence_data(self, dataframe: pd.DataFrame) -> dict[str, np.ndarray | int]:
         if len(dataframe) < self.sequence_length:
@@ -367,7 +370,6 @@ class GenerateTrainData:
                     ).astype("float32"), axis=-1,
                 ),
             }
-            print("target_highest shape:", target_cols["target_highest"].shape)
             return target_cols, pos_prices.shape[0]
 
         elif isinstance(self.target_model, PointsBasedTarget):
@@ -659,7 +661,7 @@ def _write_shard_worker(args: tuple) -> None:
             features: dict[str, tf.train.Example] = {}
             
             for feature,value in features_data.items():
-                if type(value[0]) in [float,np.float32, tf.float32]:
+                if type(value[0]) in [float,np.float32, np.float64, tf.float32]:
                    features[feature] = write_float_example(value)
                 elif type(value[0]) in [int, np.int32, np.int64]:
                     features[feature] = write_int_example(value)
