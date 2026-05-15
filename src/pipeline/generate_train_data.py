@@ -439,15 +439,16 @@ class GenerateTrainData:
                 )
         return tf.train.Example(features=tf.train.Features(feature=features))
 
-    def _build_metadata(self, *, symbol_pair, instrument_group, train_df, eval_df, target_type) -> dict:
+    def _build_metadata(self, *, symbol_pair, instrument_group, train_df, eval_df, target_type=None) -> dict:
+        
         return {
             "data_source": self.train_data_manager.data_source,
             "instrument_group": instrument_group,
             "symbol_pair": symbol_pair,
             "sequence_length": self.sequence_length,
             "stride": self.stride,
-            "target_type": str(target_type.type),
-            "target_params": target_type.model_dump(exclude={"type"}),
+            "target_type": str(target_type.type) if target_type is not None else None,
+            "target_params": target_type.model_dump(exclude={"type"}) if target_type is not None else None,
             "train_start_time": train_df["time"].iloc[0].isoformat(),
             "train_end_time": train_df["time"].iloc[-1].isoformat(),
             "eval_start_time": eval_df["time"].iloc[0].isoformat(),

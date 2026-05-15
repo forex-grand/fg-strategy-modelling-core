@@ -242,7 +242,7 @@ class Trainer:
                                           stride=self.config.test_generator_stride)
         except Exception as error:
             LOGGER.warning("Optional fg-tester call failed for %s/%s: %s", symbol, model_type, error)
-
+            # raise error
         return TrainingResult(
             symbol=symbol,
             model_type=model_type,
