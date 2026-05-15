@@ -143,8 +143,8 @@ class Trainer:
                                                 data_end=data_end),)
         
         # ── Results Summary ──────────────────────────────────────────────
-        passed = [r for r in results if r.evaluator_passed if r is not None]
-        failed = [r for r in results if not r.evaluator_passed if r is not None]
+        passed = [r for r in results if r is not None and r.evaluator_passed]
+        failed = [r for r in results if r is not None and not r.evaluator_passed]
 
         # Sort passed models by precision_buy, precision_sell, recall_buy, recall_sell (desc)
         passed_sorted = sorted(
