@@ -141,6 +141,52 @@ class Trainer:
                                                 eval_ds=eval_ds,
                                                 data_start=data_start,
                                                 data_end=data_end),)
+        
+        # ── Results Summary ──────────────────────────────────────────────
+        passed = [r for r in results if r.evaluator_passed]
+        failed = [r for r in results if not r.evaluator_passed]
+
+        # Sort passed models by precision_buy, precision_sell, recall_buy, recall_sell (desc)
+        passed_sorted = sorted(
+            passed,
+            key=lambda r: (
+                r.metrics.get("precision_buy",  0.0),
+                r.metrics.get("precision_sell", 0.0),
+                r.metrics.get("recall_buy",     0.0),
+                r.metrics.get("recall_sell",    0.0),
+            ),
+            reverse=True,
+        )
+
+        LOGGER.info("=" * 80)
+        LOGGER.info("TRAINING SUMMARY — PASSED MODELS (ranked by precision/recall)")
+        LOGGER.info("=" * 80)
+        for rank, r in enumerate(passed_sorted, start=1):
+            LOGGER.info(
+                "[#%02d] %s:%s | prec_buy=%.4f  prec_sell=%.4f  rec_buy=%.4f  rec_sell=%.4f",
+                rank,
+                r.symbol,
+                r.model_type,
+                r.metrics.get("precision_buy",  0.0),
+                r.metrics.get("precision_sell", 0.0),
+                r.metrics.get("recall_buy",     0.0),
+                r.metrics.get("recall_sell",    0.0),
+            )
+
+        LOGGER.info("-" * 80)
+        LOGGER.info("FAILED MODELS (%d total)", len(failed))
+        LOGGER.info("-" * 80)
+        for r in failed:
+            LOGGER.info(
+                "[FAIL] %s:%s | prec_buy=%.4f  prec_sell=%.4f  rec_buy=%.4f  rec_sell=%.4f",
+                r.symbol,
+                r.model_type,
+                r.metrics.get("precision_buy",  0.0),
+                r.metrics.get("precision_sell", 0.0),
+                r.metrics.get("recall_buy",     0.0),
+                r.metrics.get("recall_sell",    0.0),
+            )
+        LOGGER.info("=" * 80)
                 
         return results
 
