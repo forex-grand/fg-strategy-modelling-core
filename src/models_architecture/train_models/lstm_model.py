@@ -26,7 +26,7 @@ class LSTMModel(TrainModel):
                 if sp_l != spec1_length:
                     raise ValueError("The features must be of same length.")
 
-        if features_length<2:
+        if features_length<2 or spec1_length<2:
             raise ValueError("There must be more than one feature to use lstm model.")
         
         inputs = {key:keras.Input(shape=(spec.shape[-1] if spec.shape.rank>1 else 1,), name=key, dtype=spec.dtype)
