@@ -13,12 +13,17 @@ class LSTMModel(TrainModel):
         ##verify all features have same length
         spec1_length = None
         features_length = 0
+
         for spec in input_spec.values():
             features_length += 1
             if not spec1_length:
-                spec1_length = spec.shape[-1]
+                if spec.shape.rank>1:
+                  spec1_length = spec.shape[-1]
+                else:
+                  spec1_length = 1
             else:
-                if spec.shape[-1] != spec1_length:
+                sp_l = spec.shape[-1] if spec.shape.rank>1 else 1
+                if sp_l != spec1_length:
                     raise ValueError("The features must be of same length.")
 
         if features_length<2:
