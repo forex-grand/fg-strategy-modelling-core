@@ -129,7 +129,6 @@ def _per_class_metrics(y_true, y_pred, classes):
 
 
 def test_feature_potential(
-    preprocess_cls,
     example_data,
     sequence_length: int = 100,
     eval_fraction: float = 0.001,
@@ -149,10 +148,7 @@ def test_feature_potential(
     """
 
     # ── 1. Preprocess ──────────────────────────────────────────────────────────
-    _print_header("Step 1 · Preprocessing")
-    preprocessor = preprocess_cls(sequence_length=sequence_length)
-    transformed  = preprocessor.preprocess(example_data, training=True)
-    np_data      = _tensors_to_numpy(transformed)
+    np_data      = _tensors_to_numpy(example_data)
 
     target = np_data["target"].ravel().astype(int)
     X, col_names = _flatten_features(np_data, exclude=("target",))

@@ -11,7 +11,6 @@ from scipy.stats import f_oneway
 
 
 def compute_feature_importance_map(
-    preprocess_cls,
     example_data,
     sequence_length: int = 100,
     feature_names: list = None,
@@ -25,13 +24,8 @@ def compute_feature_importance_map(
         sequence_length:  Sequence length used to instantiate the preprocessor.
         feature_names:    Optional list of feature names to restrict analysis to.
     """
-
-    # ── 1. Preprocess ──────────────────────────────────────────────────────────
-    preprocessor = preprocess_cls(sequence_length=sequence_length)
-    transformed  = preprocessor.preprocess(example_data, training=True)
-
     features_np = {k: (v.numpy() if hasattr(v, "numpy") else np.array(v))
-                   for k, v in transformed.items()}
+                   for k, v in example_data.items()}
 
     target = features_np.pop("target").ravel().astype(int)
 
