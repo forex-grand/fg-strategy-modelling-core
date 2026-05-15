@@ -10,7 +10,7 @@ class SimpleNSTrainModel(TrainModel):
         super().__init__(preprocessor, sequence_length)
  
     def build_model(self, input_spec:dict[str,tf.TensorSpec]):
-        inputs = {key:keras.Input(shape=(spec.shape[-1] or 1,), name=key, dtype=spec.dtype)
+        inputs = {key:keras.Input(shape=(spec.shape[-1] if spec.shape.rank>1 else 1,), name=key, dtype=spec.dtype)
                   for key,spec in input_spec.items()}
         x = keras.layers.concatenate(list(inputs.values()))
         x = keras.layers.Dense(32)(x)
