@@ -43,7 +43,7 @@ from src.models_architecture.train_models.xgb_train_models.xgb_max_complex      
 from src.pipeline.performance_test import test_model_live_performance
 from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments, EpochMetricsLogger, TrainingResult
 LOGGER = logging.getLogger(__name__)
-
+LOGGER.setLevel(logging.INFO)
 
 class Trainer:
     """Runs training for every (symbol, model_type) combination."""
@@ -127,11 +127,11 @@ class Trainer:
             train_ds = self.get_training_data(train_path, preprocessor=preprocessor)
             eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor)
             for model_type in self.model_types:
-                print("+++++++==================================================================++++++++++++")
-                print("+++++++==================================================================++++++++++++")
-                print("+++++++==================================================================++++++++++++")
-                print("+++++++==================================================================++++++++++++")
-                print(f"========RUNNING TEST FOR {symbol}:{model_type}==========")
+                LOGGER.info("+++++++==================================================================++++++++++++")
+                LOGGER.info("+++++++==================================================================++++++++++++")
+                LOGGER.info("+++++++==================================================================++++++++++++")
+                LOGGER.info("+++++++==================================================================++++++++++++")
+                LOGGER.info(f"========RUNNING TEST FOR {symbol}:{model_type}==========")
                 
                 results.append(self._run_single(preprocessor=preprocessor,
                                                 symbol=symbol.symbol.strip().upper(),
@@ -194,7 +194,7 @@ class Trainer:
             # The original error came from raw_model.evaluate, so we will not call evaluate if eval_ds is empty
             if tf.data.experimental.cardinality(eval_ds).numpy() > 0: 
                 eval_values = raw_model.evaluate(eval_ds, return_dict=True, verbose=0)
-                print(f"Evaluation results for {symbol} {model_type}: {eval_values}")
+                LOGGER.info(f"Evaluation results for {symbol} {model_type}: {eval_values}")
                 metric_values = {
                     "accuracy": float(eval_values.get("accuracy", 0.0)),
                     "precision_buy": float(eval_values.get("precision_buy", 0.0)),
@@ -218,8 +218,9 @@ class Trainer:
                         metrics=metric_values,
                         model=model,
                       )
-        LOGGER.warning("PASSED EVALUATION TEST")
-        LOGGER.warning(f"PASS RESULT: {_reason_map}")
+                      
+        LOGGER.info("PASSED EVALUATION TEST")
+        LOGGER.info(f"PASS RESULT: {_reason_map}")
 
         data_range = {
             "start": data_start,#pd.Timestamp(frame["timestamp"].min()).strftime("%Y-%m-%d"),
