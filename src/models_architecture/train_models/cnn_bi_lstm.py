@@ -24,8 +24,8 @@ class CNNBiLSTMModel(TrainModel):
         if features_length<2:
             raise ValueError("There must be more than one feature to use lstm model.")
         
-        inputs = {k: keras.Input(shape=(spec.shape[-1] or 1,), name=k, dtype=spec.dtype)
-              for k, spec in input_spec.items()}
+        inputs = inputs = {key:keras.Input(shape=(spec.shape[-1] if spec.shape.rank>1 else 1,), name=key, dtype=spec.dtype)
+                  for key,spec in input_spec.items()}
         x = keras.layers.concatenate(list(inputs.values()), axis=-1)  # (batch, all_features)
         x = keras.layers.Reshape(target_shape=(spec1_length,features_length))(x)
         conv = keras.layers.Conv1D(64, kernel_size=3, padding="same", activation="relu")(x)

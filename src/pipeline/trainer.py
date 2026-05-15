@@ -191,33 +191,31 @@ class Trainer:
             raw_model = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
             model_obj = model.model
 
-            # The original error came from raw_model.evaluate, so we will not call evaluate if eval_ds is empty
-            if tf.data.experimental.cardinality(eval_ds).numpy() > 0: 
-                eval_values = raw_model.evaluate(eval_ds, return_dict=True, verbose=0)
-                LOGGER.info(f"Evaluation results for {symbol} {model_type}: {eval_values}")
-                metric_values = {
-                    "accuracy": float(eval_values.get("accuracy", 0.0)),
-                    "precision_buy": float(eval_values.get("precision_buy", 0.0)),
-                    "precision_sell": float(eval_values.get("precision_sell", 0.0)),
-                    "recall_buy": float(eval_values.get("recall_buy", 0.0)),
-                    "recall_sell": float(eval_values.get("recall_sell", 0.0)),
-                    "val_loss": float(eval_values.get("loss", 0.0)),
-                    "train_loss": float(model.history.history["loss"][-1]),
-                }
+            eval_values = raw_model.evaluate(eval_ds, return_dict=True, verbose=0)
+            LOGGER.info(f"Evaluation results for {symbol} {model_type}: {eval_values}")
+            metric_values = {
+                "accuracy": float(eval_values.get("accuracy", 0.0)),
+                "precision_buy": float(eval_values.get("precision_buy", 0.0)),
+                "precision_sell": float(eval_values.get("precision_sell", 0.0)),
+                "recall_buy": float(eval_values.get("recall_buy", 0.0)),
+                "recall_sell": float(eval_values.get("recall_sell", 0.0)),
+                "val_loss": float(eval_values.get("loss", 0.0)),
+                "train_loss": float(model.history.history["loss"][-1]),
+            }
 
-                evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
-                if not evaluator_passed:
-                    LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
-                    LOGGER.warning(f"Failure Reasons: {_reason_map}")
-                    return TrainingResult(
-                        symbol=symbol,
-                        model_type=model_type,
-                        benchmark_passed=True,
-                        evaluator_passed=False,
-                        model_gcs_path=None,
-                        metrics=metric_values,
-                        model=model,
-                      )
+            evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
+            if not evaluator_passed:
+                LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
+                LOGGER.warning(f"Failure Reasons: {_reason_map}")
+                return TrainingResult(
+                    symbol=symbol,
+                    model_type=model_type,
+                    benchmark_passed=True,
+                    evaluator_passed=False,
+                    model_gcs_path=None,
+                    metrics=metric_values,
+                    model=model,
+                  )
                       
         LOGGER.info("PASSED EVALUATION TEST")
         LOGGER.info(f"PASS RESULT: {_reason_map}")
