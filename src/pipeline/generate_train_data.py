@@ -304,9 +304,9 @@ class GenerateTrainData:
                 processed = self._preprocess_batch_data(batch)
                 for key, values in processed.items():
                     if not first_batch_done:
-                        preprocessed[key] = []
-
-                    preprocessed[key] = np.concatenate([preprocessed[key],values.numpy()], axis=0)
+                        preprocessed[key] = values.numpy()
+                    else:
+                      preprocessed[key] = np.concatenate([preprocessed[key],values.numpy()], axis=0)
 
                 if not first_batch_done:
                     first_batch_done = True

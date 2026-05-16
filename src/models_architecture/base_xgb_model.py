@@ -111,8 +111,8 @@ class XGBTrainModel(BaseModel):
         for batch_x, batch_y in train_ds.take(num_batches):
             Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = np.argmax(batch_y, axis=1)
-            X.append(Xd)
-            y.append(yd)
+            X  = np.concatenate([X, Xd], axis=0)
+            y  = np.concatenate([y, yd], axis=0)
         
         print("Training data collected: ",(datetime.now().timestamp() - ts.timestamp()),"s")
         Xe = []
@@ -120,13 +120,8 @@ class XGBTrainModel(BaseModel):
         for batch_x, batch_y in eval_ds.take(num_batches):          
             Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = np.argmax(batch_y, axis=1)
-            Xe.append(Xd)
-            ye.append(yd)
-
-        X = np.concatenate(X, axis=0) if len(X)>1 else np.squeeze(X)
-        y = np.concatenate(y, axis=0) if len(y)>1 else np.squeeze(y)
-        Xe = np.concatenate(Xe, axis=0) if len(Xe)>1 else np.squeeze(Xe)
-        ye = np.concatenate(ye, axis=0) if len(ye)>1 else np.squeeze(ye)
+            Xe = np.concatenate([Xe, Xd])
+            ye = np.concatenate([ye, yd])
         
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
         xgb_model.fit(X, y, eval_set=[(X, y),(Xe, ye),], verbose=int(os.getenv("XGB_VERBOSE","0")))
