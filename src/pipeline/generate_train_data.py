@@ -41,7 +41,8 @@ class GenerateTrainData:
         train_base_bucket: str = "forexgrand-train",
         eval_base_bucket: str = "forexgrand-eval",
         preprocess_data: bool = False,
-        preprocess_layer: Optional[keras.Model] = None
+        preprocess_layer: Optional[keras.Model] = None,
+        chunk_size: int = 10000,
     ) -> None:
         self.settings = Settings()
         self.feature_columns = self.BASE_FEATURE_COLUMNS
@@ -62,6 +63,7 @@ class GenerateTrainData:
             raise ValueError("You need to attach a preprocess layer object if preprocess data is True.")
         self.preprocess_data = preprocess_data
         self.preprocess_layer = preprocess_layer
+        self.chunk_size = chunk_size
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -235,39 +237,49 @@ class GenerateTrainData:
         
         print("Examples:", num_examples, " Targets:", target_counts)
 
-        data_features = self.build_process_data(features_data, target_data, target_counts)
+        
         seq = self.sequence_length
         stride = self.stride
-        # ✅ Partition examples across shards; each shard owns its example indices
-        shard_index_ranges = _partition_into_shards(target_counts, num_shards)
-        
-        # ✅ Serialize each shard's examples in parallel worker processes
-        worker_args = [
-            (
-                shard_idx,
-                str(output_paths[shard_idx]),
-                shard_index_ranges[shard_idx],
-                data_features,
-                seq,
-            )
-            for shard_idx in range(num_shards)
-        ]
+        chunk_size = self.chunk_size
+        import math
 
-        with ProcessPoolExecutor(max_workers=_CPU_COUNT) as executor:
-            futures = {executor.submit(_write_shard_worker, args): args[0] for args in worker_args}
-            for future in as_completed(futures):
-                shard_idx = futures[future]
-                exc = future.exception()
-                if exc:
-                    raise RuntimeError(f"Shard {shard_idx} failed: {exc}") from exc
+        chunks = max(1, math.ceil(target_counts/self.chunk_size))
+        for ch_idx in range(chunks):
+            start_idx = ch_idx*chunk_size
+            end_idx   = start_idx + chunk_size
+
+            data_features = self.build_process_data(features_data, target_data, start_idx, end_idx)
+            examples_counts = chunk_size if ch_idx<chunks-1 else target_counts%chunk_size
+            # ✅ Partition examples across shards; each shard owns its example indices
+            shard_index_ranges = _partition_into_shards(examples_counts, num_shards)
+            
+            # ✅ Serialize each shard's examples in parallel worker processes
+            worker_args = [
+                (
+                    shard_idx,
+                    str(output_paths[shard_idx]),
+                    shard_index_ranges[shard_idx],
+                    data_features,
+                    seq,
+                )
+                for shard_idx in range(num_shards)
+            ]
+
+            with ProcessPoolExecutor(max_workers=_CPU_COUNT) as executor:
+                futures = {executor.submit(_write_shard_worker, args): args[0] for args in worker_args}
+                for future in as_completed(futures):
+                    shard_idx = futures[future]
+                    exc = future.exception()
+                    if exc:
+                        raise RuntimeError(f"Shard {shard_idx} failed: {exc}") from exc
 
     # ------------------------------------------------------------------ #
-    #  Sequence builder — kept for external callers only                  #
+    #  Sequence builder — kept for external callers only                 #
     # ------------------------------------------------------------------ #
-    def build_process_data(self, features, targets, target_count):
-        features = {key:tf.constant(value[:target_count]) for key,value in features.items() if key != "num_examples"}
+    def build_process_data(self, features, targets, start_idx: int, end_idx: int):
+        features = {key:tf.constant(value[start_idx:end_idx]) for key,value in features.items() if key != "num_examples"}
         for col in targets:
-            features[col] = tf.squeeze(targets[col])
+            features[col] = tf.squeeze(targets[col][start_idx:end_idx])
 
         preprocessed = {}
         if not self.preprocess_data:
