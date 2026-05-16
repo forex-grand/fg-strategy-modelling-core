@@ -104,24 +104,36 @@ class XGBTrainModel(BaseModel):
         if cardinality==-2:
             num_batches = -1
 
-        X = np.array([])
-        y = np.array([])
+        X = None
+        y = None
         ts = datetime.now()
-        
+        first_batch_seen = False
         for batch_x, batch_y in train_ds.take(num_batches):
             Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = np.argmax(batch_y, axis=1)
-            X  = np.concatenate([X, Xd], axis=0)
-            y  = np.concatenate([y, yd], axis=0)
+            if first_batch_seen:
+                X  = np.concatenate([X, Xd], axis=0)
+                y  = np.concatenate([y, yd], axis=0)                
+            else:
+                X = Xd
+                y = yd
+                first_batch_seen = True
+
         print("Training data collected: ",(datetime.now().timestamp() - ts.timestamp()),"s")
-        Xe = np.array([])
-        ye = np.array([])
+        Xe = []
+        ye = []
+        first_batch_seen = False
         for batch_x, batch_y in eval_ds.take(num_batches):          
             Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = np.argmax(batch_y, axis=1)
-            Xe = np.concatenate([Xe, Xd], axis=0)
-            ye = np.concatenate([ye, yd], axis=0)
-        
+            if first_batch_seen:
+                Xe = np.concatenate([Xe, Xd], axis=0)
+                ye = np.concatenate([ye, yd], axis=0)
+            else:
+                Xe = Xd
+                ye = yd
+                first_batch_seen = True
+
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
         xgb_model.fit(X, y, eval_set=[(X, y),(Xe, ye),], verbose=int(os.getenv("XGB_VERBOSE","0")))
         results = xgb_model.evals_result()
