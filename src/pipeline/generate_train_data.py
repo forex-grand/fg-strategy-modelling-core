@@ -235,7 +235,8 @@ class GenerateTrainData:
 
         chunks = max(1, math.ceil(target_counts/self.chunk_size))
         next_start_idx = seq
-        for ch_idx in range(chunks):
+        import tqdm
+        for ch_idx in tqdm.tqdm(range(chunks), desc="Generating Examples in chunks."):
             start_idx = next_start_idx
             end_idx   = start_idx + chunk_size
             if target_seq_length is not None:
@@ -411,6 +412,8 @@ class GenerateTrainData:
 
             elif isinstance(self.target_model, PointsBasedTarget):
                 raise NotImplementedError("mode not implemented: use TimeBasedTarget.")
+        for col in sequence_data:
+            sequence_data[col] = sequence_data[col][:num_examples]
 
         sequence_data["num_examples"] = num_examples
         return sequence_data
