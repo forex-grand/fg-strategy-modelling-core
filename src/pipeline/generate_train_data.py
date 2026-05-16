@@ -244,12 +244,13 @@ class GenerateTrainData:
         import math
 
         chunks = max(1, math.ceil(target_counts/self.chunk_size))
-        for ch_idx in range(chunks):
+        for ch_idx in range(60, chunks):
             start_idx = ch_idx*chunk_size
-            end_idx   = start_idx + chunk_size
+            end_idx   = start_idx + chunk_size if ch_idx<chunks-1 else start_idx + target_counts%chunk_size
 
+            examples_counts = end_idx - start_idx
             data_features = self.build_process_data(features_data, target_data, start_idx, end_idx)
-            examples_counts = chunk_size if ch_idx<chunks-1 else target_counts%chunk_size
+            
             # ✅ Partition examples across shards; each shard owns its example indices
             shard_index_ranges = _partition_into_shards(examples_counts, num_shards)
             
@@ -280,7 +281,6 @@ class GenerateTrainData:
         features = {key:tf.constant(value[start_idx:end_idx]) for key,value in features.items() if key != "num_examples"}
         for col in targets:
             features[col] = tf.squeeze(targets[col][start_idx:end_idx])
-
         preprocessed = {}
         if not self.preprocess_data:
             preprocessed = features
