@@ -196,23 +196,21 @@ class GenerateTrainData:
         return train_dir, eval_dir
 
     def generate_train_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path) -> Path:
-        shard_paths = self._build_shard_paths(output_dir, split="train")
-        self._write_examples_sharded(dataframe, output_paths=shard_paths, symbol_properties=self.train_properties)
+        self._write_examples_sharded(dataframe, output_path=output_dir,split="train", symbol_properties=self.train_properties)
         return output_dir
 
     def generate_eval_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path) -> Path:
-        shard_paths = self._build_shard_paths(output_dir, split="eval")
-        self._write_examples_sharded(dataframe, output_paths=shard_paths, symbol_properties=self.eval_properties)
+        self._write_examples_sharded(dataframe, output_path=output_dir, split="eval", symbol_properties=self.eval_properties)
         return output_dir
 
     # ------------------------------------------------------------------ #
     #  Core write path                                                    #
     # ------------------------------------------------------------------ #
 
-    def _build_shard_paths(self, output_dir: Path, split: str) -> list[Path]:
+    def _build_shard_paths(self, output_dir: Path, split: str, idx_start: int=0) -> list[Path]:
         return [
-            output_dir / f"{split}_{i:05d}_of_{_SHARD_COUNT:05d}.gz"
-            for i in range(_SHARD_COUNT)
+            output_dir / f"{split}_{i:05d}_of_{idx_start+_SHARD_COUNT:05d}.gz"
+            for i in range(idx_start, idx_start+_SHARD_COUNT)
         ]
 
     def _write_examples_sharded(
@@ -220,10 +218,10 @@ class GenerateTrainData:
         dataframe: pd.DataFrame,
         symbol_properties: SymbolProperties,
         *,
-        output_paths: list[Path],
+        output_path: list[Path],
+        split: str, 
     ) -> None:
-        num_shards = len(output_paths)
-        output_paths[0].parent.mkdir(parents=True, exist_ok=True)
+        output_path.mkdir(parents=True, exist_ok=True)
 
         target_counts, target_seq_length = self._count_targets(dataframe)
         num_examples  = self._count_examples(dataframe)
@@ -250,9 +248,11 @@ class GenerateTrainData:
             data_features = self.build_process_data(features_data)
             
             # ✅ Partition examples across shards; each shard owns its example indices
+            output_paths = self._build_shard_paths(output_path, split, ch_idx*_SHARD_COUNT)
+            num_shards = len(output_paths)
             num_shards = min(num_shards, num_examples)
             shard_index_ranges = _partition_into_shards(num_examples, num_shards)
-            print(shard_index_ranges)
+
             # ✅ Serialize each shard's examples in parallel worker processes
             worker_args = [
                 (
