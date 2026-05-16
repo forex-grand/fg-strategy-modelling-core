@@ -42,7 +42,7 @@ dependencies = [
     "tensorflow>=2.21.0,<2.22.0",
     "pydantic>=2.0.0,<3.0.0",
     "keras>=3.13.2,<3.14.1",
-    "xgboost>=3.2.0,<3.2.0",
+    "xgboost>=3.2.0,<3.3.0",
 ]
 
 [project.optional-dependencies]
