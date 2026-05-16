@@ -225,8 +225,9 @@ class GenerateTrainData:
 
         target_counts, target_seq_length = self._count_targets(dataframe)
         num_examples  = self._count_examples(dataframe)
-        print("Examples:",num_examples," targets: ",target_counts)
         target_counts = min(target_counts, num_examples) if target_counts is not None else num_examples
+        print("Examples:",target_counts)
+        
         seq = self.sequence_length
         stride = self.stride
         chunk_size = self.chunk_size
@@ -234,7 +235,7 @@ class GenerateTrainData:
 
         chunks = max(1, math.ceil(target_counts/self.chunk_size))
         next_start_idx = seq
-        for ch_idx in range(chunks-2,chunks):
+        for ch_idx in range(chunks):
             start_idx = next_start_idx
             end_idx   = start_idx + chunk_size
             if target_seq_length is not None:
