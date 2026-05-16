@@ -226,6 +226,7 @@ class GenerateTrainData:
         target_counts, target_seq_length = self._count_targets(dataframe)
         num_examples  = self._count_examples(dataframe)
         target_counts = min(target_counts, num_examples) if target_counts is not None else num_examples
+        
         print("Examples:",target_counts)
         
         seq = self.sequence_length
@@ -236,19 +237,18 @@ class GenerateTrainData:
         chunks = max(1, math.ceil(target_counts/self.chunk_size))
         next_start_idx = seq
         import tqdm
-        for ch_idx in tqdm.tqdm(range(chunks), desc="Generating Examples in chunks."):
+        for ch_idx in range(chunks):
             start_idx = next_start_idx
-            end_idx   = start_idx + chunk_size
+            end_idx   = start_idx + chunk_size*self.stride - 1
             if target_seq_length is not None:
                 next_start_idx = end_idx + 1
-                end_idx = end_idx + target_seq_length + 1
+                end_idx = end_idx + target_seq_length - 1
             else:
                 next_start_idx = end_idx + 1
             features_data = self._build_sequence_data(dataframe.iloc[start_idx-seq:end_idx], symbol_properties)
             num_examples  = features_data['num_examples']
             examples_counts = end_idx - start_idx
             data_features = self.build_process_data(features_data)
-            
             # ✅ Partition examples across shards; each shard owns its example indices
             output_paths = self._build_shard_paths(output_path, split, ch_idx*_SHARD_COUNT)
             num_shards = len(output_paths)
