@@ -9,6 +9,7 @@ import numpy as np
 from xgboost import DMatrix
 from datetime import datetime
 from sklearn.utils.class_weight import compute_sample_weight
+from imblearn.over_sampling import SMOTE
 
 _COMMON = dict(
     objective="multi:softprob",
@@ -136,8 +137,14 @@ class XGBTrainModel(BaseModel):
                 first_batch_seen = True
 
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
-        weights = compute_sample_weight(class_weight='balanced', y=y)
-        xgb_model.fit(X, y, eval_set=[(X, y),(Xe, ye),], sample_weight=weights, 
+        over = SMOTE(random_state=44)
+        under= SMOTE(random_state=44)
+
+        X_res, y_res = over.fit_resample(X, y)
+        X_res, y_res = under.fit_resample(X_res, y_res)
+        weights = compute_sample_weight(class_weight='balanced', y=y_res)
+
+        xgb_model.fit(X_res, y_res, eval_set=[(X, y),(Xe, ye),], sample_weight=weights, 
             verbose=int(os.getenv("XGB_VERBOSE","0")))
         results = xgb_model.evals_result()
         self.train_loss = results["validation_0"]["mlogloss"][-1]
