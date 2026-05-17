@@ -84,6 +84,7 @@ class Trainer:
         target_model_type: TARGET_MODEL_TYPES,
         hot_reload_data: bool = False,
         run_performance_test: bool = False,
+        upload_models: bool = False,
     ) -> None:
         self.symbols: List[SymbolIn] = symbols
         self.model_types = [item.strip().lower() for item in model_types]
@@ -102,6 +103,7 @@ class Trainer:
         self.sequence_length = sequence_length
         self.hot_reload_data = hot_reload_data
         self.run_performance_test = run_performance_test
+        self.upload_models = upload_models
         self.train_ds = {}
         self.eval_ds  = {}
 
@@ -270,19 +272,25 @@ class Trainer:
         LOGGER.info("PASSED EVALUATION TEST")
         LOGGER.info(f"PASS RESULT: {_reason_map}")
 
+        
         data_range = {
             "start": data_start,#pd.Timestamp(frame["timestamp"].min()).strftime("%Y-%m-%d"),
             "end": data_end #pd.Timestamp(frame["timestamp"].max()).strftime("%Y-%m-%d"),
         }
-        model_id = self.pusher.push(
-            model=model,
-            symbol=symbol,
-            model_type=model_type,
-            metrics=metric_values,
-            sequence_length=sequence_length,
-            data_range=data_range,
-            benchmark_passed=True,
-        )
+        model_id = None
+        try:
+          if self.upload_models:
+            model_id = self.pusher.push(
+                model=model,
+                symbol=symbol,
+                model_type=model_type,
+                metrics=metric_values,
+                sequence_length=sequence_length,
+                data_range=data_range,
+                benchmark_passed=True,
+            )
+        except Exception as e:
+            LOGGER.warning(f"Errror occured uploading models, Error: {str(e)}")
 
         try:
             if self.run_performance_test:
