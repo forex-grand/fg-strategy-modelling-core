@@ -198,7 +198,6 @@ class Trainer:
             raise ValueError(f"Unsupported model type '{model_type}'.")
 
         sequence_length = int(self.sequence_length)
-
         model_class = self.MODEL_REGISTRY[model_type]
         model: BaseModel = model_class(sequence_length=sequence_length, preprocessor=preprocessor)
         model_obj = None
