@@ -8,9 +8,10 @@ from abc import abstractmethod
 import numpy as np
 from xgboost import DMatrix
 from datetime import datetime
+from sklearn.utils.class_weight import compute_sample_weight
 
 _COMMON = dict(
-    objective="multi:softmax",
+    objective="multi:softprob",
     num_class=3,
     use_label_encoder=False,
     random_state=42,
@@ -135,7 +136,9 @@ class XGBTrainModel(BaseModel):
                 first_batch_seen = True
 
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
-        xgb_model.fit(X, y, eval_set=[(X, y),(Xe, ye),], verbose=int(os.getenv("XGB_VERBOSE","0")))
+        weights = compute_sample_weight(class_weight='balanced', y=y)
+        xgb_model.fit(X, y, eval_set=[(X, y),(Xe, ye),], sample_weight=weights, 
+            verbose=int(os.getenv("XGB_VERBOSE","0")))
         results = xgb_model.evals_result()
         self.train_loss = results["validation_0"]["mlogloss"][-1]
         self.eval_loss  = results["validation_1"]["mlogloss"][-1]
