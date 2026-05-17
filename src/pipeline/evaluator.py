@@ -8,7 +8,6 @@ from src.settings import Settings
 
 LOGGER = logging.getLogger(__name__)
 
-
 class Evaluator:
     """Apply strict pass/fail gates to trained model metrics."""
 
@@ -19,7 +18,6 @@ class Evaluator:
         """Return validity flag and per-check reason strings."""
         reasons: dict[str, str] = {}
 
-        # auc = float(metrics.get("auc", 0.0))
         precision_buy = float(metrics.get("precision_buy", 0.0))
         precision_sell = float(metrics.get("precision_sell", 0.0))
         recall_buy = float(metrics.get("recall_buy", 0.0))
@@ -28,11 +26,6 @@ class Evaluator:
         train_loss = float(metrics.get("train_loss", 1e9))
         loss_gap_ratio = abs(val_loss - train_loss) / max(abs(train_loss), 1e-8)
 
-        # reasons["auc"] = (
-        #     f"PASS: {auc:.4f} > {self.config.eval_min_auc:.4f}"
-        #     if auc > self.config.eval_min_auc
-        #     else f"FAIL: {auc:.4f} <= {self.config.eval_min_auc:.4f}"
-        # )
         reasons["precision_buy"] = (
             f"PASS: {precision_buy:.4f} > {self.config.eval_min_precision:.4f}"
             if precision_buy > self.config.eval_min_precision
@@ -58,10 +51,16 @@ class Evaluator:
             if loss_gap_ratio <= self.config.eval_max_overfit_gap
             else f"FAIL: {loss_gap_ratio:.4f} > {self.config.eval_max_overfit_gap:.4f}"
         )
+        
+        is_buy_valid = reasons["precision_buy"].startswith("PASS") and reasons["recall_buy"].startswith("PASS")
+        is_sell_valid = reasons["precision_sell"].startswith("PASS") and reasons["recall_sell"].startswith("PASS")
+        is_gap_valid = reasons["overfit_gap"].startswith("PASS")
 
-        is_valid = all(text.startswith("PASS") for text in reasons.values())
+        reasons["is_buy_valid"] = is_buy_valid
+        reasons["is_sell_valid"] = is_sell_valid
+        is_valid = (is_buy_valid or is_sell_valid) and is_gap_valid
+
         for key, value in reasons.items():
             LOGGER.info("Evaluator %s: %s", key, value)
 
         return is_valid, reasons
-

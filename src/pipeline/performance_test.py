@@ -66,7 +66,8 @@ def test_model_live_performance(
         sequence_length: int,
         config: Settings,
         model_id: str,
-        stride: int = 1
+        stride: int = 1,
+        eval_metrics: dict = {}
     ):
     data_bucket = config.test_bucket_name.strip()
     data_gen = GenerateTrainData(eval_base_bucket=data_bucket,
@@ -77,7 +78,8 @@ def test_model_live_performance(
         instrument_group=group,
         sequence_length=sequence_length,
         stride=stride,
-        hot_reload=False
+        hot_reload=False,
+        
     )
 
     split_name = os.path.basename(seq_data_path)
@@ -94,8 +96,16 @@ def test_model_live_performance(
         'price': [],
     }
 
+    buy_valid = eval_metrics["is_buy_valid"]
+    sell_valid= eval_metrics["is_sell_valid"]
     is_xgb = True if xgboost_model else None
-
+    valid_classes = []
+    if buy_valid:
+        valid_classes.append(0)
+    if sell_valid:
+        valid_classes.append(1)
+  
+    valid_classes = tf.constant(valid_classes, dtype=predictions.dtype)
     for batch in batch_dataset:
         predictions = model(batch)['output']
         if is_xgb:
@@ -108,7 +118,9 @@ def test_model_live_performance(
         batch_times = batch_data['time'][:, -1]
         batch_prices = batch_data['close'][:, -1]
         pred_types = tf.where(predictions == 0, "BUY", tf.where(predictions == 1, "SELL", "HOLD"))
-        valid_signals = tf.reshape(tf.where(tf.not_equal(predictions, 2)), [-1])
+        mask = tf.reduce_any(tf.equal(tf.expand_dims(predictions, -1), valid_classes), axis=-1)
+        valid_signals = tf.reshape(tf.where(mask), [-1])
+        # valid_signals = tf.reshape(tf.where(tf.not_equal(predictions, 2)), [-1])
         df_dict['signal_type'].extend([t.decode('utf-8') for t in tf.gather(pred_types, valid_signals).numpy()])
         df_dict['timestamp'].extend(tf.gather(batch_times, valid_signals).numpy())
         df_dict['price'].extend(tf.gather(batch_prices, valid_signals).numpy())
