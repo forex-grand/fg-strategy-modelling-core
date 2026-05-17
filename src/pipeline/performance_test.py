@@ -95,7 +95,7 @@ def test_model_live_performance(
         'signal_type': [],
         'price': [],
     }
-
+    print("metrics: ",eval_metrics)
     buy_valid = eval_metrics["is_buy_valid"]
     sell_valid= eval_metrics["is_sell_valid"]
     is_xgb = True if xgboost_model else None
@@ -105,7 +105,7 @@ def test_model_live_performance(
     if sell_valid:
         valid_classes.append(1)
   
-    valid_classes = tf.constant(valid_classes, dtype=predictions.dtype)
+    valid_classes = tf.constant(valid_classes)
     for batch in batch_dataset:
         predictions = model(batch)['output']
         if is_xgb:
@@ -127,7 +127,9 @@ def test_model_live_performance(
 
     df = pd.DataFrame(df_dict)
     print("total signals: ", len(df))
-
+    if len(df)<2:
+        print("No signal found in test data.")
+        return df
     with tempfile.NamedTemporaryFile(suffix='.csv', delete=False, mode='w') as temp_file:
         df.to_csv(temp_file.name, index=False)
         temp_path = temp_file.name
