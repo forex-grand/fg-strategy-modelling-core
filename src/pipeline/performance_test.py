@@ -20,7 +20,7 @@ trade_managers = [
                             "sl_calculator":{"type":"fixed","sl_points":200}}},
     
     {"type":"time_stop", "params": {"max_duration_minutes":240}},
-    {"type":"time_stop", "params": {"max_duration_minutes":720}},
+    # {"type":"time_stop", "params": {"max_duration_minutes":720}},
     ]
 
 lotsizers = [
