@@ -83,7 +83,7 @@ class DataManager:
         base_bucket_name: Optional[str] = None,
     ) -> None:
         self.settings = Settings()
-        self.data_source = (self.settings.data_source or "").strip().lower()
+        self.data_source = (self.settings.data_source or "").strip()
         if not self.data_source:
             raise ValueError("No data source found in environment variables.")
         
@@ -123,8 +123,8 @@ class DataManager:
             >>> df, props = manager.load_data("EURUSD", "forex")
             >>> print(f"Loaded {len(df)} rows for {props['symbol']}")
         """
-        pair_name = symbol_pair.strip().upper()
-        group_name = instrument_group.strip().lower()
+        pair_name = symbol_pair.strip()
+        group_name = instrument_group.strip()
         if not pair_name:
             raise ValueError("symbol_pair is required.")
         if not group_name:
@@ -161,7 +161,7 @@ class DataManager:
         Raises:
             ValueError: If S3_STORAGE_OPTION is not supported.
         """
-        storage_option = (self.settings.s3_storage_option or "").strip().lower() or "minio"
+        storage_option = (self.settings.s3_storage_option or "").strip() or "minio"
         client_class = getStorageClient(self.settings.s3_storage_option)
         if client_class is None:
             supported = ", ".join(option.value for option in StorageOptionEnumeration)

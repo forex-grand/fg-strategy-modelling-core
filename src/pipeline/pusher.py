@@ -62,7 +62,7 @@ class ModelPusher:
                         zf.write(file, arcname=file.relative_to(model_dir))
 
             metadata = {
-                "symbol": symbol.upper(),
+                "symbol": symbol,
                 "model_type": model_type.lower(),
                 "sequence_length": int(sequence_length),
                 "trained_at": trained_at,

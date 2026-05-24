@@ -114,7 +114,7 @@ class Trainer:
             preprocessor = self.preprocessor_class(sequence_length=self.sequence_length)
             
             train_path, eval_path = self.data_gen.load_data(
-                symbol_pair=symbol.symbol.strip().upper(),
+                symbol_pair=symbol.symbol.strip(),
                 instrument_group=symbol.group.strip().lower(),
                 sequence_length=self.sequence_length,
                 stride=self.config.generated_data_strides,
@@ -124,7 +124,7 @@ class Trainer:
             data_start = self.data_gen.train_properties.data_start
             data_end = self.data_gen.train_properties.data_end
             
-            symbol_string = symbol.symbol.strip().upper()
+            symbol_string = symbol.symbol.strip()
             
             train_ds = self.get_training_data(train_path, preprocessor=preprocessor)
             eval_ds  = self.get_training_data(eval_path, preprocessor=preprocessor)
@@ -136,7 +136,7 @@ class Trainer:
                 LOGGER.info(f"========RUNNING TEST FOR {symbol}:{model_type}==========")
                 
                 results.append(self._run_single(preprocessor=preprocessor,
-                                                symbol=symbol.symbol.strip().upper(),
+                                                symbol=symbol.symbol.strip(),
                                                 group=symbol.group.strip().lower(),
                                                 model_type=model_type,
                                                 train_ds=train_ds,
