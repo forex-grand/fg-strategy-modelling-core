@@ -10,14 +10,16 @@ from src.pipeline.generate_train_data import GenerateTrainData
 import os
 import glob
 
+point_multiplier = int(os.getenv("POINT_MULTIPLIER", 1))
+
 trade_managers = [
     ###fixed stop loss and take profit points
-    {"type":"fixed_sl_tp","params":{"stop_loss_points":200,"take_profit_points":100}},
-    {"type":"fixed_sl_tp","params":{"stop_loss_points":200,"take_profit_points":300}},
+    {"type":"fixed_sl_tp","params":{"stop_loss_points":200*point_multiplier,"take_profit_points":100*point_multiplier}},
+    {"type":"fixed_sl_tp","params":{"stop_loss_points":200*point_multiplier,"take_profit_points":300*point_multiplier}},
 
     # # ##RISK REWARD BASED
     {"type":"risk_reward", "params":{"rr_ratio":3.0,
-                            "sl_calculator":{"type":"fixed","sl_points":200}}},
+                            "sl_calculator":{"type":"fixed","sl_points":200*point_multiplier},}},
     
     {"type":"time_stop", "params": {"max_duration_minutes":240}},
     # {"type":"time_stop", "params": {"max_duration_minutes":720}},
@@ -120,7 +122,7 @@ def test_model_live_performance(
             "symbols": [symbol],
             "trade_managers": trade_managers,
             "lotsizers": lotsizers,
-            "data_source": "metaquotes",
+            "data_source": os.getenv("DATA_SOURCE"),
             "data_bucket": data_bucket,
             "group":group,
             "name": f"{model_id}_{symbol}"

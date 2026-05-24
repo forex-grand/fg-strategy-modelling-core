@@ -115,7 +115,7 @@ class Trainer:
             
             train_path, eval_path = self.data_gen.load_data(
                 symbol_pair=symbol.symbol.strip(),
-                instrument_group=symbol.group.strip().lower(),
+                instrument_group=symbol.group.strip(),
                 sequence_length=self.sequence_length,
                 stride=self.config.generated_data_strides,
                 hot_reload=self.hot_reload_data,
@@ -137,7 +137,7 @@ class Trainer:
                 
                 results.append(self._run_single(preprocessor=preprocessor,
                                                 symbol=symbol.symbol.strip(),
-                                                group=symbol.group.strip().lower(),
+                                                group=symbol.group.strip(),
                                                 model_type=model_type,
                                                 train_ds=train_ds,
                                                 eval_ds=eval_ds,
