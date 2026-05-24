@@ -83,8 +83,8 @@ class GenerateTrainData:
         self.stride = stride
         self.target_model = target_model
 
-        pair_name = symbol_pair.strip().upper()
-        group_name = instrument_group.strip().lower()
+        pair_name = symbol_pair.strip()
+        group_name = instrument_group.strip()
         if not pair_name:
             raise ValueError("symbol_pair is required.")
         if not group_name:
@@ -141,8 +141,8 @@ class GenerateTrainData:
         self.stride = stride
         self.target_model = target_model
 
-        pair_name = symbol_pair.strip().upper()
-        group_name = instrument_group.strip().lower()
+        pair_name = symbol_pair.strip()
+        group_name = instrument_group.strip()
         if not pair_name:
             raise ValueError("symbol_pair is required.")
         if not group_name:
