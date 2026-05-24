@@ -29,7 +29,7 @@ def train_publish_xgb_models(preprocess_class:PreprocessBase, target_model:TARGE
     SymbolIn(symbol="Volatility 100 Index", group="volatility_indices"),
   ]
 
-  source = os.getenv("source")
+  source = os.getenv("DATA_SOURCE")
   if source == "metaquotes":
     symbols = metaquoutes
   elif source == "deriv":
