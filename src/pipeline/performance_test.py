@@ -10,32 +10,32 @@ from src.pipeline.generate_train_data import GenerateTrainData
 import os
 import glob
 
-point_multiplier = int(os.getenv("POINT_MULTIPLIER", 1))
 
-trade_managers = [
-    ###fixed stop loss and take profit points
-    {"type":"fixed_sl_tp","params":{"stop_loss_points":200*point_multiplier,"take_profit_points":100*point_multiplier}},
-    {"type":"fixed_sl_tp","params":{"stop_loss_points":200*point_multiplier,"take_profit_points":300*point_multiplier}},
+def get_trade_manager_lotsizers(point_multiplier):
+    trade_managers = [
+        ###fixed stop loss and take profit points
+        {"type":"fixed_sl_tp","params":{"stop_loss_points":200*point_multiplier,"take_profit_points":100*point_multiplier}},
+        {"type":"fixed_sl_tp","params":{"stop_loss_points":200*point_multiplier,"take_profit_points":300*point_multiplier}},
 
-    # # ##RISK REWARD BASED
-    {"type":"risk_reward", "params":{"rr_ratio":3.0,
-                            "sl_calculator":{"type":"fixed","sl_points":200*point_multiplier},}},
-    
-    {"type":"time_stop", "params": {"max_duration_minutes":240}},
-    # {"type":"time_stop", "params": {"max_duration_minutes":720}},
+        # # ##RISK REWARD BASED
+        {"type":"risk_reward", "params":{"rr_ratio":3.0,
+                                "sl_calculator":{"type":"fixed","sl_points":200*point_multiplier},}},
+        
+        {"type":"time_stop", "params": {"max_duration_minutes":240}},
+        # {"type":"time_stop", "params": {"max_duration_minutes":720}},
+        ]
+
+    lotsizers = [
+        ##percentage risk
+        {"type":"percentage_risk", "params":{"risk_pct":0.02, "min_lots":0.01, "max_lots":1}},
+
+        # ##MARTINGALE LOTSIZER
+        {"type":"martingale_lot_size", "params":{"base_lots":0.01, "multiplier":1.5, "max_steps":5}},
+
+        {"type":"anti_martingale_lot_size", "params":{"base_lots":0.01, "multiplier":1.5, "max_steps":5}}
+
     ]
-
-lotsizers = [
-    ##percentage risk
-    {"type":"percentage_risk", "params":{"risk_pct":0.02, "min_lots":0.01, "max_lots":1}},
-
-    # ##MARTINGALE LOTSIZER
-    {"type":"martingale_lot_size", "params":{"base_lots":0.01, "multiplier":1.5, "max_steps":5}},
-
-    {"type":"anti_martingale_lot_size", "params":{"base_lots":0.01, "multiplier":1.5, "max_steps":5}}
-
-]
-
+    return trade_managers, lotsizers
 
 def test_model_live_performance(
         model: BaseModel,
@@ -56,18 +56,23 @@ def test_model_live_performance(
         instrument_group=group,
         sequence_length=sequence_length,
         stride=stride,
-        hot_reload=False,
-        
+        hot_reload=False,        
     )
+    
+    symbol_props = data_gen.train_properties
+    point_multiplier = 1
+    if symbol_props.group.lower() not in ["forex","metals"]:
+        point_multiplier = 1/symbol_props.point_size
+
+    trade_managers, lotsizers = get_trade_manager_lotsizers(point_multiplier=point_multiplier)
 
     split_name = os.path.basename(seq_data_path)
     files = sorted(glob.glob(str(seq_data_path) + f"/{split_name}_*.gz"))
     load_data = tf.data.TFRecordDataset(files, compression_type=config.tf_record_compression_type, num_parallel_reads=tf.data.AUTOTUNE)
     xgboost_model = model.xgb_model
     model = model.get_serving_signature()
-    
     batch_dataset = load_data.batch(128).take(-1)
-
+    
     df_dict = {
         'timestamp': [],
         'signal_type': [],
