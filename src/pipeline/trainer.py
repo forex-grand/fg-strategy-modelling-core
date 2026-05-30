@@ -126,6 +126,7 @@ class Trainer:
                 )
             statistics = get_target_statistics(target_data, percentiles=[self.target_percentile])
             mean_target_min_value = int((statistics['quantiles']['target_highest'][self.target_percentile] + statistics['quantiles']['target_lowest'][self.target_percentile])/2)
+            LOGGER.info(f"Min Target Point: {mean_target_min_value}")
             preprocessor.min_target_points = mean_target_min_value
             self.data_gen.preprocess_layer = preprocessor
             train_path, eval_path = self.data_gen.load_data(
