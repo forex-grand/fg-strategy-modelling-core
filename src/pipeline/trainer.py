@@ -21,6 +21,7 @@ from src.settings import Settings
 from src.pipeline.evaluator import Evaluator
 from src.pipeline.generate_train_data import GenerateTrainData
 from src.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from src.pipeline.statistics_gen import get_target_statistics
 from src.pipeline.pusher import ModelPusher
 from src.models_architecture.base_model import BaseModel
 from src.models_architecture.no_train_model import NoTrainModel
@@ -85,6 +86,7 @@ class Trainer:
         hot_reload_data: bool = False,
         run_performance_test: bool = False,
         upload_models: bool = False,
+        target_percentile: int = 95,
     ) -> None:
         self.symbols: List[SymbolIn] = symbols
         self.model_types = [item.strip().lower() for item in model_types]
@@ -106,13 +108,26 @@ class Trainer:
         self.upload_models = upload_models
         self.train_ds = {}
         self.eval_ds  = {}
+        self.target_percentile = target_percentile
+
 
     def run(self) -> list[TrainingResult]:
         """Execute training for all requested model types."""
         results: list[TrainingResult] = []
         for symbol in self.symbols:
             preprocessor = self.preprocessor_class(sequence_length=self.sequence_length)
-            
+            target_data = self.data_gen.load_target_data(
+                bucket_name=self.config.train_bucket_name, 
+                symbol_pair=symbol.symbol.strip(),
+                instrument_group=symbol.group.strip(),
+                sequence_length=self.sequence_length,
+                stride=self.config.generated_data_strides,
+                target_model=self.target_model_type,
+                )
+            statistics = get_target_statistics(target_data, percentiles=[self.target_percentile])
+            mean_target_min_value = int((statistics['quantiles']['target_highest'][self.target_percentile] + statistics['quantiles']['target_lowest'][self.target_percentile])/2)
+            preprocessor.min_target_points = mean_target_min_value
+            self.data_gen.preprocess_layer = preprocessor
             train_path, eval_path = self.data_gen.load_data(
                 symbol_pair=symbol.symbol.strip(),
                 instrument_group=symbol.group.strip(),
@@ -142,7 +157,9 @@ class Trainer:
                                                 train_ds=train_ds,
                                                 eval_ds=eval_ds,
                                                 data_start=data_start,
-                                                data_end=data_end),)
+                                                data_end=data_end,
+                                                min_target_point=mean_target_min_value,
+                                                ),)
         
         # ── Results Summary ──────────────────────────────────────────────
         passed = [r for r in results if r is not None and r.evaluator_passed]
@@ -193,7 +210,7 @@ class Trainer:
         return results
 
     def _run_single(self, preprocessor, symbol,group, model_type: str, train_ds: tf.data, eval_ds: tf.data,
-                    data_start: str, data_end: str) -> TrainingResult:
+                    data_start: str, data_end: str, min_target_point:int) -> TrainingResult:
         if model_type not in self.MODEL_REGISTRY:
             raise ValueError(f"Unsupported model type '{model_type}'.")
 
@@ -296,7 +313,9 @@ class Trainer:
                 test_model_live_performance(model, symbol, group, 
                                           sequence_length, self.config, model_id,
                                           stride=self.config.test_generator_stride, 
-                                          eval_metrics=_reason_map)
+                                          eval_metrics=_reason_map,
+                                          min_target_points=min_target_points,
+                                          )
         except Exception as error:
             LOGGER.warning("Optional fg-tester call failed for %s/%s: %s", symbol, model_type, error)
             # raise error

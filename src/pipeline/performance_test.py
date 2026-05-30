@@ -11,17 +11,17 @@ import os
 import glob
 
 
-def get_trade_manager_lotsizers(point_multiplier):
+def get_trade_manager_lotsizers(min_target_points):
     trade_managers = [
         ###fixed stop loss and take profit points
-        {"type":"fixed_sl_tp","params":{"stop_loss_points":200*point_multiplier,"take_profit_points":100*point_multiplier}},
-        {"type":"fixed_sl_tp","params":{"stop_loss_points":200*point_multiplier,"take_profit_points":300*point_multiplier}},
+        {"type":"fixed_sl_tp","params":{"stop_loss_points":min_target_points,"take_profit_points":min_target_points*0.5}},
+        {"type":"fixed_sl_tp","params":{"stop_loss_points":min_target_points,"take_profit_points":min_target_points}},
 
         # # ##RISK REWARD BASED
         {"type":"risk_reward", "params":{"rr_ratio":3.0,
-                                "sl_calculator":{"type":"fixed","sl_points":200*point_multiplier},}},
+                                "sl_calculator":{"type":"fixed","sl_points":min_target_points},}},
         
-        {"type":"time_stop", "params": {"max_duration_minutes":240}},
+        {"type":"time_stop", "params": {"max_duration_minutes":240,"stop_loss_points":min_target_points, "take_profit_multiplier":1}},
         # {"type":"time_stop", "params": {"max_duration_minutes":720}},
         ]
 
@@ -45,7 +45,8 @@ def test_model_live_performance(
         config: Settings,
         model_id: str,
         stride: int = 1,
-        eval_metrics: dict = {}
+        eval_metrics: dict = {},
+        min_target_points = 200,
     ):
     data_bucket = config.test_bucket_name.strip()
     data_gen = GenerateTrainData(eval_base_bucket=data_bucket,
@@ -56,15 +57,10 @@ def test_model_live_performance(
         instrument_group=group,
         sequence_length=sequence_length,
         stride=stride,
-        hot_reload=False,        
+        hot_reload=False,
     )
-    
-    symbol_props = data_gen.train_properties
-    point_multiplier = 1
-    if symbol_props.group.lower() not in ["forex","metals"]:
-        point_multiplier = 1/symbol_props.point_size
 
-    trade_managers, lotsizers = get_trade_manager_lotsizers(point_multiplier=point_multiplier)
+    trade_managers, lotsizers = get_trade_manager_lotsizers(min_target_points=min_target_points)
 
     split_name = os.path.basename(seq_data_path)
     files = sorted(glob.glob(str(seq_data_path) + f"/{split_name}_*.gz"))
@@ -78,7 +74,7 @@ def test_model_live_performance(
         'signal_type': [],
         'price': [],
     }
-    print("metrics: ",eval_metrics)
+
     buy_valid = eval_metrics["is_buy_valid"]
     sell_valid= eval_metrics["is_sell_valid"]
     is_xgb = True if xgboost_model else None
@@ -113,6 +109,8 @@ def test_model_live_performance(
     if len(df)<2:
         print("No signal found in test data.")
         return df
+    df = df.sort_values('timestamp')
+
     with tempfile.NamedTemporaryFile(suffix='.csv', delete=False, mode='w') as temp_file:
         df.to_csv(temp_file.name, index=False)
         temp_path = temp_file.name
@@ -141,5 +139,5 @@ def test_model_live_performance(
 
         resp_json = response.json()
         print("Test Job Id: ", resp_json.get('job_id', resp_json), " Status: ", response.status_code)
-
+        df.to_csv(f'/data/performance_test_data/{symbol}/{model_id}.csv', index=False)
     return df
