@@ -108,7 +108,7 @@ def test_model_live_performance(
         df_dict['timestamp'].extend(tf.gather(batch_times, valid_signals).numpy())
         df_dict['price'].extend(tf.gather(batch_prices, valid_signals).numpy())
 
-    df = pd.DataFrame(df_dict)
+    df = pd.DataFrame(df_dict).sort_values('timestamp')
     print("total signals: ", len(df))
     if len(df)<2:
         print("No signal found in test data.")
