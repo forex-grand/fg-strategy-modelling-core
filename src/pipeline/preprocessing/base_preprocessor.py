@@ -20,15 +20,17 @@ class PreprocessBase(keras.layers.Layer, metaclass=abc.ABCMeta):
     - Inference: {"features": tensor}
     """
 
-    def __init__(self, sequence_length: int, **kwargs: Any) -> None:
+    def __init__(self, sequence_length: int, min_target_points=200, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sequence_length = int(sequence_length)
         # self._aux_model_cache: dict[str, Any] = {}
+        self.min_target_points = min_target_points
 
     def get_config(self):
         config = super().get_config()
         config.update({
             "sequence_length": self.sequence_length,
+            "min_target_points":self.min_target_points,
         })
         return config
     
