@@ -64,7 +64,7 @@ class XGBTrainModel(BaseModel):
             num_eval_batches = -1
         for batch_x, batch_y in eval_ds.take(num_eval_batches):
             X = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
-            y_true = np.argmax(batch_y, axis=1)
+            y_true = batch_y #np.argmax(batch_y, axis=1)
             y_pred = self.xgb_model.predict(X)
             y_pred = tf.one_hot(y_pred, depth=3)
 

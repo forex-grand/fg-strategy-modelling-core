@@ -232,7 +232,7 @@ class Trainer:
         elif re.match(r"^xgb", model_type):
             model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args={})
             metric_values = model.evaluate(eval_ds)
-            evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
+            evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)            
             if not evaluator_passed:
                 LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
                 LOGGER.warning(f"Failure Reasons: {_reason_map}")
