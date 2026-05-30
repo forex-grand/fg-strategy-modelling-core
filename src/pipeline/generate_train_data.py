@@ -195,6 +195,34 @@ class GenerateTrainData:
         self._write_metadata(eval_dir / "metadata.json", metadata)
         return train_dir, eval_dir
 
+    def load_target_data(
+        self,
+        bucket_name: str,
+        symbol_pair: str,
+        instrument_group: str,
+        sequence_length: int,
+        stride: int,
+        target_model: TARGET_MODEL_TYPES
+      ) -> Path:
+        self.sequence_length = sequence_length
+        self.stride = stride
+        self.target_model = target_model
+
+        pair_name = symbol_pair.strip()
+        group_name = instrument_group.strip()
+
+        if not pair_name:
+            raise ValueError("symbol_pair is required.")
+        if not group_name:
+            raise ValueError("instrument_group is required.")
+
+        bucket_manager = self._build_data_manager(bucket_name)
+        _raw_frame, self.train_properties = bucket_manager.load_data(pair_name, group_name)
+        
+        targets_dict = self._build_target_data(_raw_frame, self.train_properties)
+        
+        return targets_dict
+
     def generate_train_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path) -> Path:
         self._write_examples_sharded(dataframe, output_path=output_dir,split="train", symbol_properties=self.train_properties)
         return output_dir
@@ -227,7 +255,7 @@ class GenerateTrainData:
         num_examples  = self._count_examples(dataframe)
         target_counts = min(target_counts, num_examples) if target_counts is not None else num_examples
         
-        print("Examples:",target_counts)
+        print("Examples counts:",target_counts)
         
         seq = self.sequence_length
         stride = self.stride
@@ -418,9 +446,7 @@ class GenerateTrainData:
         sequence_data["num_examples"] = num_examples
         return sequence_data
 
-    # ------------------------------------------------------------------ #
-    #  Target builder                                                     #
-    # ------------------------------------------------------------------ #
+
 
     def _calculate_points_diff(self, price_arr1, price_arr2, points_size) -> np.ndarray:
         return (price_arr1 - price_arr2) // points_size
