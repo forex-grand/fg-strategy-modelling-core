@@ -314,7 +314,7 @@ class Trainer:
                                           sequence_length, self.config, model_id,
                                           stride=self.config.test_generator_stride, 
                                           eval_metrics=_reason_map,
-                                          min_target_points=min_target_points,
+                                          min_target_points=min_target_point,
                                           )
         except Exception as error:
             LOGGER.warning("Optional fg-tester call failed for %s/%s: %s", symbol, model_type, error)
