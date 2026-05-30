@@ -203,7 +203,7 @@ class GenerateTrainData:
         sequence_length: int,
         stride: int,
         target_model: TARGET_MODEL_TYPES
-      ) -> Path:
+      ):
         self.sequence_length = sequence_length
         self.stride = stride
         self.target_model = target_model
@@ -221,7 +221,7 @@ class GenerateTrainData:
         
         targets_dict = self._build_target_data(_raw_frame, self.train_properties)
         
-        return targets_dict
+        return targets_dict[0]
 
     def generate_train_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path) -> Path:
         self._write_examples_sharded(dataframe, output_path=output_dir,split="train", symbol_properties=self.train_properties)
