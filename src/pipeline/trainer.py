@@ -374,5 +374,4 @@ class Trainer:
         data = data.cache()
         data = data.batch(self.config.batch_size, drop_remainder=True)
         
-        data = data.prefetch(tf.data.AUTOTUNE)
         return data
