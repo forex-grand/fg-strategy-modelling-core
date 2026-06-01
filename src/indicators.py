@@ -124,7 +124,7 @@ def tf_rsi(tensor: tf.Tensor, period=14):
 ##STANDARD DEVIATION
 def tf_stdev(price_tensor: tf.Tensor, period=14):
   ##RETURNS A TENSOR OF SHAPE [BATCH, ORIGINAL_SHAPE-PERIOD+1]
-  ma = get_ma(price_tensor, period)
+  ma = tf_ma(price_tensor, period)
   deviations = tf.TensorArray(tf.float32, ma.shape[-1])
   def calculate_dev(idx, deviation_buffer):
     deviation = tf.math.sqrt(tf.reduce_sum(tf.pow(tf.subtract(price_tensor[:,idx:idx+period-1], tf.expand_dims(ma[:,idx], -1)), 2.0), -1))
@@ -142,7 +142,7 @@ def tf_stdev(price_tensor: tf.Tensor, period=14):
 ##BOLLINGER BANDS
 def tf_bb(price_tensor: tf.Tensor, period=14, deviation=2.0):
   ##RETURNS A TENSOR OF SHAPE [BATCH, ORIGINAL_VALUES_SHAPE-PERIOD+1]
-  ma = get_ma(price_tensor, period)
+  ma = tf_ma(price_tensor, period)
   upper_band_buffer = tf.TensorArray(tf.float32, ma.shape[-1])
   lower_band_buffer = tf.TensorArray(tf.float32, ma.shape[-1])
 
@@ -165,8 +165,8 @@ def tf_german_klass_volatility(open_tensor: tf.Tensor, high_tensor: tf.Tensor, c
   log_hl = tf.math.log(tf.math.divide_no_nan(high_tensor, low_tensor))
   log_co = tf.math.log(tf.math.divide_no_nan(close_tensor, open_tensor))
 
-  gk = tf.subtract(tf.multiply(tf.square(log_hl), 0.5), tf.multiply(tf.subtract(tf.multiply(2, tf.math.log(2.0)), 1.0), tf.square(log_co)))
-  mean = tf.sqrt(tf.reduce_mean(tf.signal.frame(gk, period, 1), -1), -1)
+  gk = tf.subtract(tf.multiply(tf.square(log_hl), 0.5), tf.multiply(tf.subtract(tf.multiply(2.0, tf.math.log(2.0)), 1.0), tf.square(log_co)))
+  mean = tf.sqrt(tf.reduce_mean(tf.signal.frame(gk, period, 1), -1))
   anualized = tf.multiply(mean, tf.sqrt(tf.cast(period, tf.float32)))
   return anualized
 
