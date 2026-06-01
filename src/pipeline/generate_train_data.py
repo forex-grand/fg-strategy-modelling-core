@@ -331,10 +331,11 @@ class GenerateTrainData:
             for batch in tf_data.take(-1):
                 processed = self._preprocess_batch_data(batch)
                 for key, values in processed.items():
+                    arr = np.atleast_1d(values.numpy())
                     if not first_batch_done:
-                        preprocessed[key] = values.numpy()
+                        preprocessed[key] = arr
                     else:
-                      preprocessed[key] = np.concatenate([preprocessed[key],values.numpy()], axis=0)
+                      preprocessed[key] = np.concatenate([preprocessed[key],arr], axis=0)
 
                 if not first_batch_done:
                     first_batch_done = True
