@@ -6,6 +6,7 @@ import re
 import logging
 from dataclasses import dataclass
 from typing import Type, List
+from pathlib import Path
 import asyncio
 import pandas as pd
 import tensorflow as tf
@@ -87,6 +88,7 @@ class Trainer:
         run_performance_test: bool = False,
         upload_models: bool = False,
         target_percentile: int = 95,
+        use_dataframe_format: bool = False,
     ) -> None:
         self.symbols: List[SymbolIn] = symbols
         self.model_types = [item.strip().lower() for item in model_types]
@@ -99,6 +101,7 @@ class Trainer:
             eval_base_bucket=self.config.eval_bucket_name,
             preprocess_data=True, 
             preprocess_layer=self.preprocessor,
+            use_dataframe_format=use_dataframe_format,
             )
         self.evaluator = Evaluator(self.config)
         self.pusher = ModelPusher(self.config)
@@ -106,6 +109,7 @@ class Trainer:
         self.hot_reload_data = hot_reload_data
         self.run_performance_test = run_performance_test
         self.upload_models = upload_models
+        self.use_dataframe_format = use_dataframe_format
         self.train_ds = {}
         self.eval_ds  = {}
         self.target_percentile = target_percentile
@@ -136,6 +140,7 @@ class Trainer:
                 stride=self.config.generated_data_strides,
                 hot_reload=self.hot_reload_data,
                 target_model=self.target_model_type,
+                use_dataframe_format=self.use_dataframe_format,
             )
             data_start = self.data_gen.train_properties.data_start
             data_end = self.data_gen.train_properties.data_end
@@ -354,25 +359,57 @@ class Trainer:
     
     def get_training_data(self, file_pattern: str, preprocessor: Layer, repeat=False):
         import glob
-        # Dynamically determine the file prefix from the last part of the file_pattern (directory name)
-        split_name = os.path.basename(file_pattern)
-        files = sorted(glob.glob(str(file_pattern) + f"/{split_name}_*.gz"))
         
-        data = tf.data.TFRecordDataset(
-            files,
-            compression_type="GZIP",
-            buffer_size=100 * 1024 * 1024,
-            num_parallel_reads=tf.data.AUTOTUNE
-        )
-        data = data.map(lambda x: self.deserialize(x, preprocessor), num_parallel_calls=tf.data.AUTOTUNE)
-        if self.config.shuffle_data:
-            data = data.shuffle(self.config.shuffle_buffer_size, reshuffle_each_iteration=True)
-        data = data.map(
-            lambda x: self.preprocess(x, preprocess_layer=preprocessor),
-            num_parallel_calls=tf.data.AUTOTUNE
-        )
-        data = data.cache()
-        data = data.batch(self.config.batch_size, drop_remainder=True)
+        if self.use_dataframe_format:
+            # Load from parquet dataframe format
+            split_name = os.path.basename(file_pattern)
+            parquet_file = Path(file_pattern) / f"{split_name}_data.parquet"
+            
+            if not parquet_file.exists():
+                raise FileNotFoundError(f"Parquet file not found: {parquet_file}")
+            
+            # Load dataframe
+            df = pd.read_parquet(str(parquet_file))
+            
+            # Convert dataframe to TensorFlow dataset
+            # Each column in the dataframe should contain the array data
+            dataset_dict = {}
+            for col in df.columns:
+                # Assuming each row contains the full array for that column
+                dataset_dict[col] = tf.convert_to_tensor(df[col].values[0], dtype=tf.float32)
+            
+            data = tf.data.Dataset.from_tensor_slices(dataset_dict)
+            
+            if self.config.shuffle_data:
+                data = data.shuffle(self.config.shuffle_buffer_size, reshuffle_each_iteration=True)
+            
+            data = data.map(
+                lambda x: self.preprocess(x, preprocess_layer=preprocessor),
+                num_parallel_calls=tf.data.AUTOTUNE
+            )
+            data = data.cache()
+            data = data.batch(self.config.batch_size, drop_remainder=True)
+            data = data.prefetch(tf.data.AUTOTUNE)
+        else:
+            # Load from TFRecord format (existing logic)
+            split_name = os.path.basename(file_pattern)
+            files = sorted(glob.glob(str(file_pattern) + f"/{split_name}_*.gz"))
+            
+            data = tf.data.TFRecordDataset(
+                files,
+                compression_type="GZIP",
+                buffer_size=100 * 1024 * 1024,
+                num_parallel_reads=tf.data.AUTOTUNE
+            )
+            data = data.map(lambda x: self.deserialize(x, preprocessor), num_parallel_calls=tf.data.AUTOTUNE)
+            if self.config.shuffle_data:
+                data = data.shuffle(self.config.shuffle_buffer_size, reshuffle_each_iteration=True)
+            data = data.map(
+                lambda x: self.preprocess(x, preprocess_layer=preprocessor),
+                num_parallel_calls=tf.data.AUTOTUNE
+            )
+            data = data.cache()
+            data = data.batch(self.config.batch_size, drop_remainder=True)
+            data = data.prefetch(tf.data.AUTOTUNE)
         
-        data = data.prefetch(tf.data.AUTOTUNE)
         return data

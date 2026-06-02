@@ -43,6 +43,7 @@ class GenerateTrainData:
         preprocess_data: bool = False,
         preprocess_layer: Optional[keras.Model] = None,
         chunk_size: int = 10000,
+        use_dataframe_format: bool = False,
     ) -> None:
         self.settings = Settings()
         self.feature_columns = self.BASE_FEATURE_COLUMNS
@@ -64,6 +65,7 @@ class GenerateTrainData:
         self.preprocess_data = preprocess_data
         self.preprocess_layer = preprocess_layer
         self.chunk_size = chunk_size
+        self.use_dataframe_format = use_dataframe_format
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -78,10 +80,12 @@ class GenerateTrainData:
         stride: int,
         hot_reload: bool = False,
         target_model: TARGET_MODEL_TYPES = None,
+        use_dataframe_format: bool | None = None,
     ) -> Path:
         self.sequence_length = sequence_length
         self.stride = stride
         self.target_model = target_model
+        use_df_format = use_dataframe_format if use_dataframe_format is not None else self.use_dataframe_format
 
         pair_name = symbol_pair.strip()
         group_name = instrument_group.strip()
@@ -118,7 +122,7 @@ class GenerateTrainData:
         # self.generate_train_data_examples(_frame, output_dir=output_dir)
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = {
-                pool.submit(self.generate_train_data_examples, _frame, output_dir=output_dir): "train",
+                pool.submit(self.generate_train_data_examples, _frame, output_dir=output_dir, use_dataframe_format=use_df_format): "train",
             }
             for future in as_completed(futures):
                 split = futures[future]
@@ -136,10 +140,12 @@ class GenerateTrainData:
         stride: int,
         hot_reload: bool = False,
         target_model: TARGET_MODEL_TYPES = None,
+        use_dataframe_format: bool | None = None,
     ) -> tuple[Path, Path]:
         self.sequence_length = sequence_length
         self.stride = stride
         self.target_model = target_model
+        use_df_format = use_dataframe_format if use_dataframe_format is not None else self.use_dataframe_format
 
         pair_name = symbol_pair.strip()
         group_name = instrument_group.strip()
@@ -182,8 +188,8 @@ class GenerateTrainData:
         # ✅ Run train + eval generation concurrently on separate threads
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = {
-                pool.submit(self.generate_train_data_examples, train_frame, output_dir=train_dir): "train",
-                pool.submit(self.generate_eval_data_examples, eval_frame, output_dir=eval_dir): "eval",
+                pool.submit(self.generate_train_data_examples, train_frame, output_dir=train_dir, use_dataframe_format=use_df_format): "train",
+                pool.submit(self.generate_eval_data_examples, eval_frame, output_dir=eval_dir, use_dataframe_format=use_df_format): "eval",
             }
             for future in as_completed(futures):
                 split = futures[future]
@@ -223,13 +229,19 @@ class GenerateTrainData:
         
         return targets_dict[0]
 
-    def generate_train_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path) -> Path:
-        self._write_examples_sharded(dataframe, output_path=output_dir,split="train", symbol_properties=self.train_properties)
-        return output_dir
+    def generate_train_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path, use_dataframe_format: bool = False) -> Path:
+        if use_dataframe_format:
+            return self._save_sequence_data_to_dataframe(dataframe, output_path=output_dir, split="train", symbol_properties=self.train_properties)
+        else:
+            self._write_examples_sharded(dataframe, output_path=output_dir, split="train", symbol_properties=self.train_properties)
+            return output_dir
 
-    def generate_eval_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path) -> Path:
-        self._write_examples_sharded(dataframe, output_path=output_dir, split="eval", symbol_properties=self.eval_properties)
-        return output_dir
+    def generate_eval_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path, use_dataframe_format: bool = False) -> Path:
+        if use_dataframe_format:
+            return self._save_sequence_data_to_dataframe(dataframe, output_path=output_dir, split="eval", symbol_properties=self.eval_properties)
+        else:
+            self._write_examples_sharded(dataframe, output_path=output_dir, split="eval", symbol_properties=self.eval_properties)
+            return output_dir
 
     # ------------------------------------------------------------------ #
     #  Core write path                                                    #
@@ -302,6 +314,63 @@ class GenerateTrainData:
                     exc = future.exception()
                     if exc:
                         raise RuntimeError(f"Shard {shard_idx} failed: {exc}") from exc
+
+    def _save_sequence_data_to_dataframe(
+        self,
+        dataframe: pd.DataFrame,
+        symbol_properties: SymbolProperties,
+        *,
+        output_path: Path,
+        split: str,
+    ) -> Path:
+        """Save sequence data as a parquet file instead of TFRecords."""
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        target_counts, target_seq_length = self._count_targets(dataframe)
+        num_examples = self._count_examples(dataframe)
+        target_counts = min(target_counts, num_examples) if target_counts is not None else num_examples
+        
+        print("Examples counts:", target_counts)
+        
+        seq = self.sequence_length
+        stride = self.stride
+        chunk_size = self.chunk_size
+        import math
+        
+        chunks = max(1, math.ceil(target_counts / self.chunk_size))
+        next_start_idx = seq
+        
+        all_sequence_data = {}
+        
+        for ch_idx in range(chunks):
+            start_idx = next_start_idx
+            end_idx = start_idx + chunk_size * self.stride - 1
+            if target_seq_length is not None:
+                next_start_idx = end_idx + 1
+                end_idx = end_idx + target_seq_length - 1
+            else:
+                next_start_idx = end_idx + 1
+            
+            features_data = self._build_sequence_data(dataframe.iloc[start_idx - seq:end_idx], symbol_properties)
+            data_features = self.build_process_data(features_data)
+            
+            # Accumulate sequence data
+            for key, values in data_features.items():
+                if key != "num_examples":
+                    values_np = values.numpy() if isinstance(values, tf.Tensor) else values
+                    if key not in all_sequence_data:
+                        all_sequence_data[key] = values_np
+                    else:
+                        all_sequence_data[key] = np.concatenate([all_sequence_data[key], values_np], axis=0)
+        
+        # Convert to DataFrame
+        result_df = pd.DataFrame({key: [val] for key, val in all_sequence_data.items()})
+        
+        # Save as parquet
+        parquet_path = output_path / f"{split}_data.parquet"
+        result_df.to_parquet(parquet_path, index=False)
+        
+        return output_path
 
     def _count_targets(self, dataframe: pd.Dataframe):
         if self.target_model:
