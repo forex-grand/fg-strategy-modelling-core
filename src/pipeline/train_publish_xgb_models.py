@@ -8,7 +8,7 @@ from src.pipeline.preprocessing.base_preprocessor import PreprocessBase
 
 def train_publish_xgb_models(preprocess_class:PreprocessBase, target_model:TARGET_MODEL_TYPES, 
                   sequence_length:int, run_performance_test: bool=True, upload_models: bool = False,
-                  hot_reload: bool=True, target_percentile: float=75):
+                  hot_reload: bool=True, target_percentile: float=75, use_dataframe_format=True):
   symbols = []
   metaquoutes = [
     SymbolIn(symbol="AUDUSD", group="forex"),
@@ -45,6 +45,7 @@ def train_publish_xgb_models(preprocess_class:PreprocessBase, target_model:TARGE
   trainer = TR(symbols=symbols,sequence_length=sequence_length, model_types=train_model_types,
             preprocessor_class=preprocess_class, target_model_type=target_model, 
             run_performance_test=run_performance_test, hot_reload_data=hot_reload,
-            upload_models=upload_models,target_percentile=target_percentile,
+            upload_models=upload_models,target_percentile=target_percentile, 
+            use_dataframe_format=use_dataframe_format
             )
   results = trainer.run()
