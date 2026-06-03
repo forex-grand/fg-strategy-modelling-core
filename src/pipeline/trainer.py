@@ -234,7 +234,20 @@ class Trainer:
             steps_per_epoch=self.config.steps_per_epoch,
             )
             model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
-        
+            metric_values = model.evaluate(eval_ds)
+            evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
+            if not evaluator_passed:
+                LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
+                LOGGER.warning(f"Failure Reasons: {_reason_map}")
+                return TrainingResult(
+                    symbol=symbol,
+                    model_type=model_type,
+                    benchmark_passed=True,
+                    evaluator_passed=False,
+                    model_gcs_path=None,
+                    metrics=metric_values,
+                    model=model,
+                )
         elif re.match(r"^xgb", model_type):
             model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args={})
             metric_values = model.evaluate(eval_ds)
