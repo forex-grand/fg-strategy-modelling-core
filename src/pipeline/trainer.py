@@ -367,16 +367,16 @@ class Trainer:
             
             if not parquet_file.exists():
                 raise FileNotFoundError(f"Parquet file not found: {parquet_file}")
-            
+            print("parquet_file: ",parquet_file)
             # Load dataframe
-            df = pd.read_parquet(str(parquet_file))
+            df = pd.read_parquet(parquet_file)
             
             # Convert dataframe to TensorFlow dataset
             # Each column in the dataframe should contain the array data
             dataset_dict = {}
             for col in df.columns:
                 # Assuming each row contains the full array for that column
-                dataset_dict[col] = tf.convert_to_tensor(df[col].values[0], dtype=tf.float32)
+                dataset_dict[col] = tf.convert_to_tensor(df[col].values, dtype=tf.float32)
             
             data = tf.data.Dataset.from_tensor_slices(dataset_dict)
             

@@ -325,7 +325,6 @@ class GenerateTrainData:
     ) -> Path:
         """Save sequence data as a parquet file instead of TFRecords."""
         output_path.mkdir(parents=True, exist_ok=True)
-        
         target_counts, target_seq_length = self._count_targets(dataframe)
         num_examples = self._count_examples(dataframe)
         target_counts = min(target_counts, num_examples) if target_counts is not None else num_examples
@@ -364,7 +363,7 @@ class GenerateTrainData:
                         all_sequence_data[key] = np.concatenate([all_sequence_data[key], values_np], axis=0)
         
         # Convert to DataFrame
-        result_df = pd.DataFrame({key: [val] for key, val in all_sequence_data.items()})
+        result_df = pd.DataFrame(all_sequence_data)
         
         # Save as parquet
         parquet_path = output_path / f"{split}_data.parquet"
