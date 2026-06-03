@@ -244,7 +244,6 @@ class Trainer:
                     model_type=model_type,
                     benchmark_passed=True,
                     evaluator_passed=False,
-                    model_gcs_path=None,
                     metrics=metric_values,
                     model=model,
                 )
@@ -260,7 +259,6 @@ class Trainer:
                     model_type=model_type,
                     benchmark_passed=True,
                     evaluator_passed=False,
-                    model_gcs_path=None,
                     metrics=metric_values,
                     model=model,
                 )
@@ -296,7 +294,6 @@ class Trainer:
                         model_type=model_type,
                         benchmark_passed=True,
                         evaluator_passed=False,
-                        model_gcs_path=None,
                         metrics=metric_values,
                         model=model,
                       )
