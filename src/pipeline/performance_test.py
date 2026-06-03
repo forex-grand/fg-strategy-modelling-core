@@ -139,5 +139,7 @@ def test_model_live_performance(
 
         resp_json = response.json()
         print("Test Job Id: ", resp_json.get('job_id', resp_json), " Status: ", response.status_code)
-        df.to_csv(f'/data/performance_test_data/{symbol}/{model_id}.csv', index=False)
+        save_path = f'/data/performance_test_data/{symbol}'
+        os.makedirs(save_path, exist_ok=True)
+        df.to_csv(f'{save_path}/{model_id}.csv', index=False)
     return df
