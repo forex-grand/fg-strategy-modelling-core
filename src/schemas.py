@@ -46,7 +46,6 @@ class TrainingResult:
     model_type: str
     benchmark_passed: bool
     evaluator_passed: bool
-    model_gcs_path: str | None
     metrics: dict[str, float]
     model: tf.keras.Model
     model_id: Optional[str] = None 

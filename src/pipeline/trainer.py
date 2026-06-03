@@ -343,7 +343,6 @@ class Trainer:
             model_type=model_type,
             benchmark_passed=True,
             evaluator_passed=True,
-            model_gcs_path=model.generate_model_path(self.sequence_length, "no_train_model"),
             metrics=metric_values,
             model=model,
             model_id= model_id,
