@@ -383,7 +383,7 @@ class Trainer:
             for col in df.columns:
                 dtype = dtype_mappings[str(df[col].dtype)]
                 # Assuming each row contains the full array for that column
-                dataset_dict[col] = tf.convert_to_tensor(df[col].values, dtype=tf.float32)
+                dataset_dict[col] = tf.convert_to_tensor(df[col].values, dtype=dtype)
             
             data = tf.data.Dataset.from_tensor_slices(dataset_dict)
             
