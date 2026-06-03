@@ -374,7 +374,14 @@ class Trainer:
             # Convert dataframe to TensorFlow dataset
             # Each column in the dataframe should contain the array data
             dataset_dict = {}
+            dtype_mappings = {
+                'float32':tf.float32,
+                'float64':tf.float32,
+                'int32':tf.int64,
+                'int64':tf.int64,
+            }
             for col in df.columns:
+                dtype = dtype_mappings[str(df[col].dtype)]
                 # Assuming each row contains the full array for that column
                 dataset_dict[col] = tf.convert_to_tensor(df[col].values, dtype=tf.float32)
             
