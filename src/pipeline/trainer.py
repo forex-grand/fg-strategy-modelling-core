@@ -252,7 +252,6 @@ class Trainer:
             fn_args = {
               'symbol':symbol,
               'group':group,
-              'model_type':model_type,
               'train_ds_keys':one_d.keys(),
               "min_target_point":min_target_point,
               "data_start":data_start,
