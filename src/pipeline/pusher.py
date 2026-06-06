@@ -14,6 +14,7 @@ import zipfile
 from src.settings import Settings
 from src.models_architecture.base_model import BaseModel
 from src.storage.utils import getStorageClient
+import joblib
 import re
 
 LOGGER = logging.getLogger(__name__)
@@ -88,6 +89,16 @@ class ModelPusher:
                 xgboost_object_key = f"prediction-models/{unique_identifier}/xgboost.json"
                 self.storage_client.upload_file(
                   file_directory=str(local_xgb_path),
+                  bucket=self.storage_bucket,
+                  object_key=xgboost_object_key,
+                  )
+
+                if model.feature_transformer is not None:
+                  local_transformer_path = local_root / "transformer.pkl"
+                  joblib.dump(model.feature_transformer, local_transformer_path)
+                  xgboost_object_key = f"prediction-models/{unique_identifier}/transformer.pkl"
+                  self.storage_client.upload_file(
+                  file_directory=str(local_transformer_path),
                   bucket=self.storage_bucket,
                   object_key=xgboost_object_key,
                   )

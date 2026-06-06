@@ -13,9 +13,6 @@ def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}):
     transformer_path = os.path.join(save_dir, "transformer.pkl")
 
     
-    # print("X train: ",X_train)
-    # print("Hello transformer")
-    # Load or fit transformer
     if os.path.exists(transformer_path):
         print(f"Loading transformer from {transformer_path}")
         transformer = joblib.load(transformer_path)

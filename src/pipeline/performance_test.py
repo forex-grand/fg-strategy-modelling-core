@@ -9,6 +9,7 @@ from src.settings import Settings
 from src.pipeline.generate_train_data import GenerateTrainData
 import os
 import glob
+from src.pipeline.feature_selection import transform_fe
 
 
 def get_trade_manager_lotsizers(min_target_points):
@@ -87,6 +88,10 @@ def test_model_live_performance(
     valid_classes = tf.constant(valid_classes)
     for batch in batch_dataset:
         predictions = model(batch)['output']
+        if model.feature_transformer:
+          raise ValueError("Feature Transformer does not exist for transformer openfe")
+          X = pd.DataFrame(X, columns=predictions.keys())
+          predictions = transform_fe(X, model.feature_transformer)
         if is_xgb:
             predictions = xgboost_model.predict(predictions)
 
