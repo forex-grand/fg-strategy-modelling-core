@@ -48,6 +48,7 @@ def test_model_live_performance(
         stride: int = 1,
         eval_metrics: dict = {},
         min_target_points = 200,
+        feature_keys=[],
     ):
     data_bucket = config.test_bucket_name.strip()
     data_gen = GenerateTrainData(eval_base_bucket=data_bucket,
@@ -67,6 +68,7 @@ def test_model_live_performance(
     files = sorted(glob.glob(str(seq_data_path) + f"/{split_name}_*.gz"))
     load_data = tf.data.TFRecordDataset(files, compression_type=config.tf_record_compression_type, num_parallel_reads=tf.data.AUTOTUNE)
     xgboost_model = model.xgb_model
+    feature_transformer = model.feature_transformer
     model = model.get_serving_signature()
     batch_dataset = load_data.batch(128).take(-1)
     
@@ -88,10 +90,9 @@ def test_model_live_performance(
     valid_classes = tf.constant(valid_classes)
     for batch in batch_dataset:
         predictions = model(batch)['output']
-        if model.feature_transformer:
-          raise ValueError("Feature Transformer does not exist for transformer openfe")
-          X = pd.DataFrame(X, columns=predictions.keys())
-          predictions = transform_fe(X, model.feature_transformer)
+        if feature_transformer:
+          X = pd.DataFrame(predictions, columns=feature_keys)
+          predictions = transform_fe(X, feature_transformer)
         if is_xgb:
             predictions = xgboost_model.predict(predictions)
 
