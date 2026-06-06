@@ -248,7 +248,15 @@ class Trainer:
                     model=model,
                 )
         elif re.match(r"^xgb", model_type):
-            model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args={})
+            one_d = next(iter(train_ds.take(1)))
+            print(one_d.element_spec)
+            fn_args = {
+              'symbol':symbol,
+              'group':group,
+              'model_type':model_type,
+              'train_ds_keys':one_d.keys(),
+            }
+            model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
             metric_values = model.evaluate(eval_ds)
             evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)            
             if not evaluator_passed:

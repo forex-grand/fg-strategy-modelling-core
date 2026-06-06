@@ -20,6 +20,7 @@ class BaseModel:
         self.data_directory = Path(self.settings.data_directory).expanduser().resolve()
         self.history: keras.callbacks.History = None
         self.sequence_length = sequence_length
+        self.feature_transformer = None
 
     @abstractmethod
     def build_train_model(self, train_ds, eval_ds, fn_args:ModelBuildTrainArguments)->tf.keras.Model:

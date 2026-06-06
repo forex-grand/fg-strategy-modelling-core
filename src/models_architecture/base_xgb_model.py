@@ -10,6 +10,7 @@ from xgboost import DMatrix
 from datetime import datetime
 from sklearn.utils.class_weight import compute_sample_weight
 from imblearn.over_sampling import SMOTE
+from src.pipeline.feature_selection import auto_expand_feature_fe, transform_fe
 
 _COMMON = dict(
     objective="multi:softprob",
@@ -62,9 +63,17 @@ class XGBTrainModel(BaseModel):
         num_eval_batches = cardinality if cardinality>0 else num_batches
         if cardinality==-2:
             num_eval_batches = -1
+
         for batch_x, batch_y in eval_ds.take(num_eval_batches):
             X = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
-            y_true = tf.cast(tf.squeeze((batch_y)), tf.int32) #np.argmax(batch_y, axis=1)
+            
+            if str(os.getenv('FEATURE_GENERATOR')).upper()=="OPENFE":
+              if not self.feature_transformer:
+                raise ValueError("Feature Transformer does not exist for transformer openfe")
+
+              X = transform_fe(X, self.feature_transformer)
+
+            y_true = tf.cast(tf.squeeze((batch_y)), tf.int32)
             y_pred = tf.squeeze(tf.cast(self.xgb_model.predict(X), tf.int32))
             y_pred = tf.one_hot(y_pred, depth=3)
 
@@ -88,6 +97,7 @@ class XGBTrainModel(BaseModel):
             'train_loss':self.train_loss,
         }
         return metrics
+
     def build_train_model(self, train_ds, eval_ds, fn_args):
         inputs = self._build_input_signature()
         inputs_dict = {inp.name: inp for inp in inputs}
@@ -137,6 +147,10 @@ class XGBTrainModel(BaseModel):
                 first_batch_seen = True
 
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
+        
+        if str(os.getenv('FEATURE_GENERATOR')).upper()=="OPENFE":
+          X, Xe = auto_expand_feature_fe(X, y, Xe, metadata=fn_args)
+
         over = SMOTE(random_state=44)
         under= SMOTE(random_state=44)
 
@@ -144,7 +158,7 @@ class XGBTrainModel(BaseModel):
         X_res, y_res = under.fit_resample(X_res, y_res)
         weights = compute_sample_weight(class_weight='balanced', y=y_res)
 
-        xgb_model.fit(X_res, y_res, eval_set=[(X, y),(Xe, ye),], sample_weight=weights, 
+        xgb_model.fit(X_res, y_res, eval_set=[(X, y),(Xe, ye),], sample_weight=weights,
             verbose=int(os.getenv("XGB_VERBOSE","0")))
         results = xgb_model.evals_result()
         self.train_loss = results["validation_0"]["mlogloss"][-1]
