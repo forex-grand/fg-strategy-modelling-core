@@ -11,6 +11,7 @@ from datetime import datetime
 from sklearn.utils.class_weight import compute_sample_weight
 from imblearn.over_sampling import SMOTE
 from src.pipeline.feature_selection import auto_expand_feature_fe, transform_fe
+import pandas as pd
 
 _COMMON = dict(
     objective="multi:softprob",
@@ -147,10 +148,12 @@ class XGBTrainModel(BaseModel):
                 first_batch_seen = True
 
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
-        
-        if str(os.getenv('FEATURE_GENERATOR')).upper()=="OPENFE":
-          X, Xe = auto_expand_feature_fe(X, y, Xe, metadata=fn_args)
 
+        if str(os.getenv('FEATURE_GENERATOR')).upper()=="OPENFE":
+          X = pd.DataFrame(X, columns=train_ds.element_spec[0].keys())
+          Xe = pd.DataFrame(Xe, columns=train_ds.element_spec[0].keys())
+          X, Xe = auto_expand_feature_fe(X, y, Xe, metadata=fn_args)
+          
         over = SMOTE(random_state=44)
         under= SMOTE(random_state=44)
 

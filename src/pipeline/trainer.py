@@ -248,8 +248,7 @@ class Trainer:
                     model=model,
                 )
         elif re.match(r"^xgb", model_type):
-            one_d = next(iter(train_ds.take(1)))
-            print(one_d.element_spec)
+            one_d = train_ds.element_spec[0]
             fn_args = {
               'symbol':symbol,
               'group':group,
