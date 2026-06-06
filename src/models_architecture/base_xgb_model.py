@@ -71,7 +71,7 @@ class XGBTrainModel(BaseModel):
             if str(os.getenv('FEATURE_GENERATOR')).upper()=="OPENFE":
               if not self.feature_transformer:
                 raise ValueError("Feature Transformer does not exist for transformer openfe")
-
+              X = pd.DataFrame(X, columns=eval_ds.element_spec[0].keys())
               X = transform_fe(X, self.feature_transformer)
 
             y_true = tf.cast(tf.squeeze((batch_y)), tf.int32)
@@ -153,7 +153,7 @@ class XGBTrainModel(BaseModel):
           X = pd.DataFrame(X, columns=train_ds.element_spec[0].keys())
           Xe = pd.DataFrame(Xe, columns=train_ds.element_spec[0].keys())
           X, Xe = auto_expand_feature_fe(X, y, Xe, metadata=fn_args)
-          
+
         over = SMOTE(random_state=44)
         under= SMOTE(random_state=44)
 
