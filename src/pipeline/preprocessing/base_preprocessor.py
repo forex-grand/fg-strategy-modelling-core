@@ -110,19 +110,24 @@ class PreprocessBase(keras.layers.Layer, metaclass=abc.ABCMeta):
         target_tf_seconds = target_tf_minutes * 60
         bar_start_indexes = times // target_tf_seconds
         keys = ["time", "open", "close", "high", "low", "spread", "real_volume", "tick_volume"]
+
+
         def compute_bars_from_row(row_tuple):
             start_indices, _opens, _highs, _closes, _lows, _real_volumes, _spreads, _tick_volumes = row_tuple
             unique_vals, unq_indices, _ = tf.unique_with_counts(start_indices)
             num_partitions = tf.shape(unique_vals)[0]
-            ta_time = tf.ragged.stack_dynamic_partitions(start_indices, partitions=unq_indices, num_partitions=num_partitions)[:, :1].flat_values*target_tf_seconds
-            ta_open = tf.ragged.stack_dynamic_partitions(_opens, partitions=unq_indices, num_partitions=num_partitions)[:, :1].flat_values
-            ta_close = tf.ragged.stack_dynamic_partitions(_closes, partitions=unq_indices, num_partitions=num_partitions)[:, -1:].flat_values
-            ta_high  = tf.reduce_max(tf.ragged.stack_dynamic_partitions(_highs, partitions=unq_indices, num_partitions=num_partitions), axis=-1)
-            ta_low   = tf.reduce_max(tf.ragged.stack_dynamic_partitions(_lows, partitions=unq_indices, num_partitions=num_partitions), axis=-1)
-            ta_spread   = tf.reduce_mean(tf.ragged.stack_dynamic_partitions(_spreads, partitions=unq_indices, num_partitions=num_partitions), axis=-1)
-            ta_real_vol = tf.reduce_sum(tf.ragged.stack_dynamic_partitions(_real_volumes, partitions=unq_indices, num_partitions=num_partitions), axis=-1)
-            ta_tick_vol = tf.reduce_sum(tf.ragged.stack_dynamic_partitions(_tick_volumes, partitions=unq_indices, num_partitions=num_partitions), axis=-1)
-
+            indices = tf.range(tf.shape(unq_indices)[0])
+            indices_groups = tf.ragged.stack_dynamic_partitions(indices, partitions=unq_indices, num_partitions=num_partitions)
+            required_indices_groups = indices_groups[-min_num_partitions:]
+            
+            ta_time = tf.gather(start_indices, required_indices_groups)[:, -1:].flat_values*target_tf_seconds
+            ta_open = tf.gather(_opens, required_indices_groups)[:, :1].flat_values
+            ta_close = tf.gather(_closes, required_indices_groups)[:, -1:].flat_values
+            ta_high  = tf.reduce_max(tf.gather(_highs, required_indices_groups), axis=-1)
+            ta_low   = tf.reduce_max(tf.gather(_lows, required_indices_groups), axis=-1)
+            ta_spread   = tf.reduce_mean(tf.gather(_spreads, required_indices_groups), axis=-1)
+            ta_real_vol = tf.reduce_sum(tf.gather(_real_volumes, required_indices_groups), axis=-1)
+            ta_tick_vol = tf.reduce_sum(tf.gather(_tick_volumes, required_indices_groups), axis=-1)
             bar_tuples = (
                 ta_time,
                 ta_open,
@@ -136,6 +141,24 @@ class PreprocessBase(keras.layers.Layer, metaclass=abc.ABCMeta):
 
             # bar_tuples is a tuple of 8 tensors, each shape (num_bars,)
             return bar_tuples
+
+        results = [compute_bars_from_row((bar_start_indexes[i],opens[i],highs[i],closes[i], lows[i], real_vol[i], spread[i], tick_vols[i])) for i in range(bar_start_indexes.shape[0])]
+
+        min_counts = min_num_partitions-2
+
+        full_data = {
+          'time':  tf.stack([b[0][-min_counts:] for b in results]),
+          'open':  tf.stack([b[1][-min_counts:] for b in results]),
+          'close': tf.stack([b[2][-min_counts:] for b in results]),
+          'high':  tf.stack([b[3][-min_counts:] for b in results]),
+          'low':   tf.stack([b[4][-min_counts:] for b in results]),
+          'spread':tf.stack([b[5][-min_counts:] for b in results]),
+          'real_vol':tf.stack([b[6][-min_counts:] for b in results]),
+          'tick_vol':tf.stack([b[7][-min_counts:] for b in results]),
+          }
+        for k in full_data:
+          full_data[k] = tf.ensure_shape(full_data[k], [close_shape[0], min_counts])
+        return full_data
 
         results = [compute_bars_from_row((bar_start_indexes[i],opens[i],highs[i],closes[i], lows[i], real_vol[i], spread[i], tick_vols[i])) for i in range(bar_start_indexes.shape[0])]
 
