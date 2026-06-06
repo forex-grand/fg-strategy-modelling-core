@@ -254,6 +254,9 @@ class Trainer:
               'group':group,
               'model_type':model_type,
               'train_ds_keys':one_d.keys(),
+              "min_target_point":min_target_point,
+              "data_start":data_start,
+              "data_end":data_end,
             }
             model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
             metric_values = model.evaluate(eval_ds)

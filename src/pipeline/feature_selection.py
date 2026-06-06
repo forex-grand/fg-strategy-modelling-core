@@ -13,8 +13,8 @@ def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}):
     transformer_path = os.path.join(save_dir, "transformer.pkl")
 
     
-    print("X train: ",X_train)
-    print("Hello transformer")
+    # print("X train: ",X_train)
+    # print("Hello transformer")
     # Load or fit transformer
     if os.path.exists(transformer_path):
         print(f"Loading transformer from {transformer_path}")
@@ -23,7 +23,7 @@ def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}):
         print(f"Fitting transformer, will save to {transformer_path}")
         cpu_counts = os.cpu_count()
         ofe = OpenFE()
-        transformer = ofe.fit(data=X_train, label=y_train, n_jobs=cpu_counts)
+        transformer = ofe.fit(data=X_train, label=y_train, n_jobs=cpu_counts, verbose=False)
         joblib.dump(transformer, transformer_path)
 
     # Transform
@@ -42,5 +42,6 @@ def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}):
     return X_train_new, X_test_new, transformer
 
 def transform_fe(X, feature_transformer):
-  X_transformed, _ = transform(X, X, feature_transformer)
+  cpu_counts = os.cpu_count()    
+  X_transformed, _ = transform(X, X, feature_transformer, n_jobs=cpu_counts)
   return X_transformed

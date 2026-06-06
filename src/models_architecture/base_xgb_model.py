@@ -23,6 +23,7 @@ _COMMON = dict(
     verbosity=0,
 )
 
+cpu_counts = os.cpu_count()
 
 class XGBTrainModel(BaseModel):
     """
@@ -152,7 +153,7 @@ class XGBTrainModel(BaseModel):
         if str(os.getenv('FEATURE_GENERATOR')).upper()=="OPENFE":
           X = pd.DataFrame(X, columns=train_ds.element_spec[0].keys())
           Xe = pd.DataFrame(Xe, columns=train_ds.element_spec[0].keys())
-          X, Xe = auto_expand_feature_fe(X, y, Xe, metadata=fn_args)
+          X, Xe, self.feature_transformer = auto_expand_feature_fe(X, y, Xe, metadata=fn_args)
 
         over = SMOTE(random_state=44)
         under= SMOTE(random_state=44)
