@@ -248,29 +248,41 @@ class Trainer:
                     model=model,
                 )
         elif re.match(r"^xgb", model_type):
-            one_d = train_ds.element_spec[0]
-            fn_args = {
-              'symbol':symbol,
-              'group':group,
-              'train_ds_keys':one_d.keys(),
-              "min_target_point":min_target_point,
-              "data_start":data_start,
-              "data_end":data_end,
-            }
-            model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
-            metric_values = model.evaluate(eval_ds)
-            evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)            
-            if not evaluator_passed:
-                LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
-                LOGGER.warning(f"Failure Reasons: {_reason_map}")
+            try:
+                one_d = train_ds.element_spec[0]
+                fn_args = {
+                  'symbol':symbol,
+                  'group':group,
+                  'train_ds_keys':one_d.keys(),
+                  "min_target_point":min_target_point,
+                  "data_start":data_start,
+                  "data_end":data_end,
+                }
+                model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
+                metric_values = model.evaluate(eval_ds)
+                evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)            
+                if not evaluator_passed:
+                    LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
+                    LOGGER.warning(f"Failure Reasons: {_reason_map}")
+                    return TrainingResult(
+                        symbol=symbol,
+                        model_type=model_type,
+                        benchmark_passed=True,
+                        evaluator_passed=False,
+                        metrics=metric_values,
+                        model=model,
+                    )
+              
+            except Exception as e:
+                LOGGER.warning(F"Encountered: {str(e)}")
                 return TrainingResult(
-                    symbol=symbol,
-                    model_type=model_type,
-                    benchmark_passed=True,
-                    evaluator_passed=False,
-                    metrics=metric_values,
-                    model=model,
-                )
+                        symbol="None",
+                        model_type=model_type,
+                        benchmark_passed=False,
+                        evaluator_passed=False,
+                        metrics=metric_values,
+                        model=model,
+                    )
         else:
             fn_args = ModelBuildTrainArguments(
             learning_rate=self.config.learning_rate,

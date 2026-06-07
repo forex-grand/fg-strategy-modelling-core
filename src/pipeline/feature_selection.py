@@ -5,7 +5,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}):
+def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}, force_reload=False):
     # Build save path from metadata
     meta_str = "_".join(f"{k}-{v}" for k, v in sorted(metadata.items()))
     save_dir = os.path.join("data", meta_str if meta_str else "default")
@@ -13,7 +13,7 @@ def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}):
     transformer_path = os.path.join(save_dir, "transformer.pkl")
 
     
-    if os.path.exists(transformer_path):
+    if os.path.exists(transformer_path) and not force_reload:
         print(f"Loading transformer from {transformer_path}")
         transformer = joblib.load(transformer_path)
     else:
