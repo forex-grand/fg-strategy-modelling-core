@@ -136,6 +136,7 @@ class AuxilaryModelManager:
   
   def _ohlc_to_feature_dict(self, row_dict) -> dict:
       length = len(row_dict['time'])
+      print("length: ",length, "seq_length: ",len(row_dict['time'][0]))
       feature_dict = [tf.train.Example(features=tf.train.Features(feature={
           "time": tf.train.Feature(int64_list=tf.train.Int64List(value=row_dict['time'][i])),
           "open": tf.train.Feature(float_list=tf.train.FloatList(value=row_dict['open'][i])),
@@ -146,8 +147,8 @@ class AuxilaryModelManager:
           "tick_volume": tf.train.Feature(float_list=tf.train.FloatList(value=row_dict['tick_volume'][i])),
           "real_volume": tf.train.Feature(float_list=tf.train.FloatList(value=row_dict['real_volume'][i])),
       })).SerializeToString() for i in range(length)]
-
-      return feature_dict
+      print("Refusing to get out")
+      return feature_dict  
 
   def prepare_data(self, data):
       serialized = self._ohlc_to_feature_dict(data)
@@ -190,7 +191,7 @@ class AuxilaryModelManager:
           if not self.model:
               raise ValueError(f"Error encountered loading model: {self.model_id}")
           model = self.model
-
+      print("modells")
       data = self.prepare_data(data)
       model_type = model["metadata"].get("model_type", "none")
       if "nn" in model_type.lower():
