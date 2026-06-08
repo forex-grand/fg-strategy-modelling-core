@@ -14,12 +14,11 @@ from src.pipeline.feature_selection import auto_expand_feature_fe, transform_fe
 import pandas as pd
 
 _COMMON = dict(
-    objective="multi:softprob",
-    num_class=3,
+    objective="binary:logistic",
     use_label_encoder=False,
     random_state=42,
     tree_method="hist",
-    eval_metric="mlogloss",
+    eval_metric="logloss",
     verbosity=0,
 )
 
@@ -165,7 +164,7 @@ class XGBTrainModel(BaseModel):
         xgb_model.fit(X_res, y_res, eval_set=[(X, y),(Xe, ye),], sample_weight=weights,
             verbose=int(os.getenv("XGB_VERBOSE","0")))
         results = xgb_model.evals_result()
-        self.train_loss = results["validation_0"]["mlogloss"][-1]
-        self.eval_loss  = results["validation_1"]["mlogloss"][-1]
+        self.train_loss = results["validation_0"]["logloss"][-1]
+        self.eval_loss  = results["validation_1"]["logloss"][-1]
         self.xgb_model = xgb_model
         return self.xgb_model

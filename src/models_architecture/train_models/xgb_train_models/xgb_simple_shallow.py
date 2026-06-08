@@ -1,16 +1,6 @@
 
-from src.models_architecture.base_xgb_model import XGBTrainModel
+from src.models_architecture.base_xgb_model import XGBTrainModel, _COMMON
 from xgboost import XGBClassifier
-
-_COMMON = dict(
-    objective="multi:softmax",
-    num_class=3,
-    use_label_encoder=False,
-    random_state=42,
-    tree_method="hist",
-    eval_metric="mlogloss",
-    verbosity=0,
-)
 
 class XGBSimpleShallow(XGBTrainModel):
     """
