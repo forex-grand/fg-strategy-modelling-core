@@ -126,16 +126,8 @@ class GenerateTrainData:
             symbol_pair=pair_name, version_number=version_number, split="train",
         )
 
-        # self.generate_train_data_examples(_frame, output_dir=output_dir)
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = {
-                pool.submit(self.generate_train_data_examples, _frame, output_dir=output_dir, use_dataframe_format=use_df_format): "train",
-            }
-            for future in as_completed(futures):
-                split = futures[future]
-                exc = future.exception()
-                if exc:
-                    raise RuntimeError(f"{split} generation failed: {exc}") from exc
+        self.generate_train_data_examples(_frame, output_dir=output_dir, use_dataframe_format=use_df_format)
+
         self._write_metadata(output_dir / "metadata.json", metadata)
         return output_dir
 
@@ -391,12 +383,10 @@ class GenerateTrainData:
     # ------------------------------------------------------------------ #
     def build_process_data(self, features):
         features = {key:tf.constant(value) for key,value in features.items() if key != "num_examples"}
-        print("shape in: ",features['time'].shape)
-
+        
         if self.filter_by_model:
             features = self.filter_data_by_model(features)
 
-        print("shape out: ",features['time'].shape)
         preprocessed = {}
         if not self.preprocess_data:
             preprocessed = features
@@ -424,7 +414,6 @@ class GenerateTrainData:
 
     def filter_data_by_model(self, data_in:dict):
         predictions = self.filter_aux_model.predict(data_in)
-        print(predictions)
         valid_mask  = np.array(predictions)==self.filter_target_label_id
         valid_ds = {
           key:value[valid_mask]

@@ -136,14 +136,14 @@ class AuxilaryModelManager:
   
   def _ohlc_to_feature_dict(self, row_dict) -> dict:
       length = len(row_dict['time'])
-      time_  = row_dict['time']
-      open_  = row_dict['open']
-      high_  = row_dict['high']
-      close_ = row_dict['close']
-      low_   = row_dict['low']
-      spread_      = row_dict['spread']
-      tick_volume_ = row_dict['tick_volume']
-      real_volume_ = row_dict['real_volume']
+      time_  = row_dict['time'].numpy()
+      open_  = row_dict['open'].numpy()
+      high_  = row_dict['high'].numpy()
+      close_ = row_dict['close'].numpy()
+      low_   = row_dict['low'].numpy()
+      spread_      = row_dict['spread'].numpy()
+      tick_volume_ = row_dict['tick_volume'].numpy()
+      real_volume_ = row_dict['real_volume'].numpy()
       feature_dict = [tf.train.Example(features=tf.train.Features(feature={
           "time": tf.train.Feature(int64_list=tf.train.Int64List(value=time_[i])),
           "open": tf.train.Feature(float_list=tf.train.FloatList(value=open_[i])),
@@ -159,7 +159,6 @@ class AuxilaryModelManager:
   def prepare_data(self, data):
       ts = datetime.now()
       serialized = self._ohlc_to_feature_dict(data)
-      print("da: ",datetime.now() - ts)
       return serialized
 
 
@@ -199,7 +198,6 @@ class AuxilaryModelManager:
           if not self.model:
               raise ValueError(f"Error encountered loading model: {self.model_id}")
           model = self.model
-      print("modells")
       data = self.prepare_data(data)
       model_type = model["metadata"].get("model_type", "none")
       if "nn" in model_type.lower():
