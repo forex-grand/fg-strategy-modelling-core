@@ -136,22 +136,30 @@ class AuxilaryModelManager:
   
   def _ohlc_to_feature_dict(self, row_dict) -> dict:
       length = len(row_dict['time'])
-      print("length: ",length, "seq_length: ",len(row_dict['time'][0]))
+      time_  = row_dict['time']
+      open_  = row_dict['open']
+      high_  = row_dict['high']
+      close_ = row_dict['close']
+      low_   = row_dict['low']
+      spread_      = row_dict['spread']
+      tick_volume_ = row_dict['tick_volume']
+      real_volume_ = row_dict['real_volume']
       feature_dict = [tf.train.Example(features=tf.train.Features(feature={
-          "time": tf.train.Feature(int64_list=tf.train.Int64List(value=row_dict['time'][i])),
-          "open": tf.train.Feature(float_list=tf.train.FloatList(value=row_dict['open'][i])),
-          "high": tf.train.Feature(float_list=tf.train.FloatList(value=row_dict['high'][i])),
-          "close": tf.train.Feature(float_list=tf.train.FloatList(value=row_dict['close'][i])),
-          "low": tf.train.Feature(float_list=tf.train.FloatList(value=row_dict['low'][i])),
-          "spread": tf.train.Feature(float_list=tf.train.FloatList(value=row_dict['spread'][i])),
-          "tick_volume": tf.train.Feature(float_list=tf.train.FloatList(value=row_dict['tick_volume'][i])),
-          "real_volume": tf.train.Feature(float_list=tf.train.FloatList(value=row_dict['real_volume'][i])),
+          "time": tf.train.Feature(int64_list=tf.train.Int64List(value=time_[i])),
+          "open": tf.train.Feature(float_list=tf.train.FloatList(value=open_[i])),
+          "high": tf.train.Feature(float_list=tf.train.FloatList(value=high_[i])),
+          "close": tf.train.Feature(float_list=tf.train.FloatList(value=close_[i])),
+          "low": tf.train.Feature(float_list=tf.train.FloatList(value=low_[i])),
+          "spread": tf.train.Feature(float_list=tf.train.FloatList(value=spread_[i])),
+          "tick_volume": tf.train.Feature(float_list=tf.train.FloatList(value=tick_volume_[i])),
+          "real_volume": tf.train.Feature(float_list=tf.train.FloatList(value=real_volume_[i])),
       })).SerializeToString() for i in range(length)]
-      print("Refusing to get out")
-      return feature_dict  
+      return feature_dict
 
   def prepare_data(self, data):
+      ts = datetime.now()
       serialized = self._ohlc_to_feature_dict(data)
+      print("da: ",datetime.now() - ts)
       return serialized
 
 

@@ -45,7 +45,7 @@ class GenerateTrainData:
         preprocess_layer: Optional[keras.Model] = None,
         chunk_size: int = 10000,
         use_dataframe_format: bool = False,
-        filter_by_model: Optional[bool] = None,
+        filter_by_model: bool = False,
         filter_model_id: Optional[str] = None,
         target_label: int = 0,
     ) -> None:
@@ -392,8 +392,10 @@ class GenerateTrainData:
     def build_process_data(self, features):
         features = {key:tf.constant(value) for key,value in features.items() if key != "num_examples"}
         print("shape in: ",features['time'].shape)
-        if self.filter_data_by_model:
+
+        if self.filter_by_model:
             features = self.filter_data_by_model(features)
+
         print("shape out: ",features['time'].shape)
         preprocessed = {}
         if not self.preprocess_data:
