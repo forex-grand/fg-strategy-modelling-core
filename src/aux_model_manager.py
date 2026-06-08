@@ -136,14 +136,15 @@ class AuxilaryModelManager:
   
   def _ohlc_to_feature_dict(self, row_dict) -> dict:
       length = len(row_dict['time'])
-      time_  = row_dict['time'].numpy()
-      open_  = row_dict['open'].numpy()
-      high_  = row_dict['high'].numpy()
-      close_ = row_dict['close'].numpy()
-      low_   = row_dict['low'].numpy()
-      spread_      = row_dict['spread'].numpy()
-      tick_volume_ = row_dict['tick_volume'].numpy()
-      real_volume_ = row_dict['real_volume'].numpy()
+      sequence_length = self.model['metadata']['sequence_length']
+      time_  = row_dict['time'].numpy()[-sequence_length:]
+      open_  = row_dict['open'].numpy()[-sequence_length:]
+      high_  = row_dict['high'].numpy()[-sequence_length:]
+      close_ = row_dict['close'].numpy()[-sequence_length:]
+      low_   = row_dict['low'].numpy()[-sequence_length:]
+      spread_      = row_dict['spread'].numpy()[-sequence_length:]
+      tick_volume_ = row_dict['tick_volume'].numpy()[-sequence_length:]
+      real_volume_ = row_dict['real_volume'].numpy()[-sequence_length:]
       feature_dict = [tf.train.Example(features=tf.train.Features(feature={
           "time": tf.train.Feature(int64_list=tf.train.Int64List(value=time_[i])),
           "open": tf.train.Feature(float_list=tf.train.FloatList(value=open_[i])),
