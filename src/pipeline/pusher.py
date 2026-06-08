@@ -37,6 +37,7 @@ class ModelPusher:
         sequence_length: int,
         data_range: dict[str, str],
         benchmark_passed: bool,
+        features_keys: list = []
     ) -> str:
         """Save tf.saved_model and metadata, then upload to target GCS path."""
         trained_at = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
@@ -65,6 +66,8 @@ class ModelPusher:
             metadata = {
                 "symbol": symbol,
                 "model_type": model_type.lower(),
+                "has_feature_transformer":True if model.feature_transformer else False,
+                "feature_keys":features_keys,
                 "sequence_length": int(sequence_length),
                 "trained_at": trained_at,
                 "metrics": {
@@ -93,15 +96,15 @@ class ModelPusher:
                   object_key=xgboost_object_key,
                   )
 
-                if model.feature_transformer is not None:
-                  local_transformer_path = local_root / "transformer.pkl"
-                  joblib.dump(model.feature_transformer, local_transformer_path)
-                  xgboost_object_key = f"prediction-models/{unique_identifier}/transformer.pkl"
-                  self.storage_client.upload_file(
-                  file_directory=str(local_transformer_path),
-                  bucket=self.storage_bucket,
-                  object_key=xgboost_object_key,
-                  )
+            if model.feature_transformer is not None:
+              local_transformer_path = local_root / "transformer.pkl"
+              joblib.dump(model.feature_transformer, local_transformer_path)
+              xgboost_object_key = f"prediction-models/{unique_identifier}/transformer.pkl"
+              self.storage_client.upload_file(
+              file_directory=str(local_transformer_path),
+              bucket=self.storage_bucket,
+              object_key=xgboost_object_key,
+              )
 
             self.storage_client.upload_file(
                 file_directory=str(zip_path),

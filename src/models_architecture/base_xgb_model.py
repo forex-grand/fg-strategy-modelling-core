@@ -51,11 +51,11 @@ class XGBTrainModel(BaseModel):
         ##Define evaluation metrics
         precision_buy = keras.metrics.Precision(class_id=0)
         precision_sell= keras.metrics.Precision(class_id=1)
-        precision_hold= keras.metrics.Precision(class_id=2)
+        # precision_hold= keras.metrics.Precision(class_id=2)
         
         recall_buy = keras.metrics.Recall(class_id=0)
         recall_sell= keras.metrics.Recall(class_id=1)
-        recall_hold= keras.metrics.Recall(class_id=2)
+        # recall_hold= keras.metrics.Recall(class_id=2)
         accuracy   = keras.metrics.CategoricalAccuracy()
 
         cardinality = eval_ds.cardinality()
@@ -81,11 +81,11 @@ class XGBTrainModel(BaseModel):
 
             precision_buy.update_state(y_true, y_pred)
             precision_sell.update_state(y_true, y_pred)
-            precision_hold.update_state(y_true, y_pred)
+            # precision_hold.update_state(y_true, y_pred)
 
             recall_buy.update_state(y_true, y_pred)
             recall_sell.update_state(y_true, y_pred)
-            recall_hold.update_state(y_true, y_pred)
+            # recall_hold.update_state(y_true, y_pred)
 
             accuracy.update_state(y_true, y_pred)
 
@@ -129,8 +129,8 @@ class XGBTrainModel(BaseModel):
                 X  = np.concatenate([X, Xd], axis=0)
                 y  = np.concatenate([y, yd], axis=0)                
             else:
-                X = Xd
-                y = yd
+                X = np.array(Xd)
+                y = np.array(yd)
                 first_batch_seen = True
 
         print("Training data collected: ",(datetime.now().timestamp() - ts.timestamp()),"s")
@@ -144,8 +144,8 @@ class XGBTrainModel(BaseModel):
                 Xe = np.concatenate([Xe, Xd], axis=0)
                 ye = np.concatenate([ye, yd], axis=0)
             else:
-                Xe = Xd
-                ye = yd
+                Xe = np.array(Xd)
+                ye = np.array(yd)
                 first_batch_seen = True
 
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")

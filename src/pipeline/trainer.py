@@ -47,6 +47,7 @@ from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments, 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
+CLASS_IDS = [0, 1]
 class Trainer:
     """Runs training for every (symbol, model_type) combination."""
 
@@ -341,6 +342,7 @@ class Trainer:
                 sequence_length=sequence_length,
                 data_range=data_range,
                 benchmark_passed=True,
+                features_keys=list(train_ds.element_spec[0].keys())
             )
         except Exception as e:
             LOGGER.warning(f"Errror occured uploading models, Error: {str(e)}")
@@ -386,7 +388,7 @@ class Trainer:
     def preprocess(self, data, preprocess_layer: Layer):
         # data = preprocess_layer(data, training=True)
         target = data.pop('target')
-        return data, tf.one_hot(target, depth=3)
+        return data, tf.one_hot(target, depth=len(CLASS_IDS))
     
     def get_training_data(self, file_pattern: str, preprocessor: Layer, repeat=False):
         import glob
