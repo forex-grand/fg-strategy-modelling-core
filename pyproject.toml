@@ -44,6 +44,9 @@ dependencies = [
     "keras>=3.13.2,<3.14.1",
     "xgboost-cpu>=3.2.0,<3.3.0",
     "torch>=2.10.0,<2.20.0",
+    "shap>=0.52.0,<0.53.0",
+    "openfe>=0.0.12,<0.0.13",
+    "imbalanced-learn>=0.14.2,<0.15.0",
 ]
 
 [project.optional-dependencies]
@@ -74,10 +77,10 @@ Documentation = "https://fg-strategy-modelling-core.readthedocs.io"
 "Bug Tracker" = "https://github.com/forexgrand/fg-strategy-modelling-core/issues"
 
 [tool.setuptools]
-packages = ["src"]
+packages = ["fgmodeller"]
 
 [tool.setuptools.package-dir]
-src = "src"
+fgmodeller = "src"
 
 [tool.black]
 line-length = 100

@@ -154,8 +154,7 @@ class Trainer:
                 LOGGER.info("+++++++==================================================================++++++++++++")
                 LOGGER.info("+++++++==================================================================++++++++++++")
                 LOGGER.info(f"========RUNNING TEST FOR {symbol}:{model_type}==========")
-                
-                results.append(self._run_single(preprocessor=preprocessor,
+                result = self._run_single(preprocessor=preprocessor,
                                                 symbol=symbol.symbol.strip(),
                                                 group=symbol.group.strip(),
                                                 model_type=model_type,
@@ -164,7 +163,9 @@ class Trainer:
                                                 data_start=data_start,
                                                 data_end=data_end,
                                                 min_target_point=mean_target_min_value,
-                                                ),)
+                                                )
+                print("Result: ",result)
+                results.append(result)
         
         # ── Results Summary ──────────────────────────────────────────────
         passed = [r for r in results if r is not None and r.evaluator_passed]
