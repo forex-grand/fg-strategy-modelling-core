@@ -27,7 +27,6 @@ from src.pipeline.pusher import ModelPusher
 from src.models_architecture.base_model import BaseModel
 from src.models_architecture.no_train_model import NoTrainModel
 from src.models_architecture.train_models.simple_model import SimpleNSTrainModel
-from src.models_architecture.train_models.xgb_train_models.xgb_simple import XGBSimple
 from src.models_architecture.train_models.xgb_train_models.xgb_tiny             import XGBTiny
 from src.models_architecture.train_models.xgb_train_models.xgb_simple_shallow   import XGBSimpleShallow
 from src.models_architecture.train_models.xgb_train_models.xgb_simple_slow      import XGBSimpleSlow
@@ -58,7 +57,6 @@ class Trainer:
         "complex-ns": ComplexNSTrainModel,
         "lstm": LSTMModel,
         "cnn-bi-lstm": CNNBiLSTMModel,
-        'xgb-simple':XGBSimple,
         'xgb-tiny'           : XGBTiny,
         'xgb-simple-shallow' : XGBSimpleShallow,
         'xgb-simple-slow'    : XGBSimpleSlow,
