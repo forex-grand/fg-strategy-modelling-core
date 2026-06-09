@@ -77,10 +77,10 @@ Documentation = "https://fg-strategy-modelling-core.readthedocs.io"
 "Bug Tracker" = "https://github.com/forexgrand/fg-strategy-modelling-core/issues"
 
 [tool.setuptools]
-packages = ["fgmodeller"]
+packages = ["src"]
 
 [tool.setuptools.package-dir]
-fgmodeller = "src"
+src = "src"
 
 [tool.black]
 line-length = 100
