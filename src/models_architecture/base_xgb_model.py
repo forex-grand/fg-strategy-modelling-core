@@ -148,7 +148,9 @@ class XGBTrainModel(BaseModel):
                 first_batch_seen = True
 
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
-
+        train_target_dist = np.unique_counts(y)
+        eval_target_dist  = np.unique_counts(ye)
+        print("Target Distribution, Train",train_target_dist," Eval: ",eval_target_dist)
         if str(os.getenv('FEATURE_GENERATOR')).upper()=="OPENFE":
           X = pd.DataFrame(X, columns=train_ds.element_spec[0].keys())
           Xe = pd.DataFrame(Xe, columns=train_ds.element_spec[0].keys())
