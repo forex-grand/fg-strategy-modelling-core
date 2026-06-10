@@ -15,6 +15,7 @@ from torch import prelu
 from src.data_manager import DataManager
 from src.settings import Settings
 from src.schemas import TARGET_MODEL_TYPES, TimeBasedTarget, PointsBasedTarget, SymbolProperties
+from src.aux_model_manager import AuxilaryModelManager as AX
 
 _TFRECORD_OPTIONS = tf.io.TFRecordOptions(compression_type="GZIP", compression_level=1)
 _SHARD_COUNT = 16
@@ -44,6 +45,9 @@ class GenerateTrainData:
         preprocess_layer: Optional[keras.Model] = None,
         chunk_size: int = 10000,
         use_dataframe_format: bool = False,
+        filter_by_model: bool = False,
+        filter_model_id: Optional[str] = None,
+        target_label: int = 0,
     ) -> None:
         self.settings = Settings()
         self.feature_columns = self.BASE_FEATURE_COLUMNS
@@ -66,11 +70,14 @@ class GenerateTrainData:
         self.preprocess_layer = preprocess_layer
         self.chunk_size = chunk_size
         self.use_dataframe_format = use_dataframe_format
+        self.filter_by_model = filter_by_model
+        self.filter_model_id = filter_model_id
+        self.filter_target_label_id = target_label
+        self.filter_aux_model = None if not filter_by_model else AX(model_id=filter_model_id)
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
     # ------------------------------------------------------------------ #
-
     def load_single_data(
         self,
         bucket_name: str,
@@ -119,16 +126,8 @@ class GenerateTrainData:
             symbol_pair=pair_name, version_number=version_number, split="train",
         )
 
-        # self.generate_train_data_examples(_frame, output_dir=output_dir)
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = {
-                pool.submit(self.generate_train_data_examples, _frame, output_dir=output_dir, use_dataframe_format=use_df_format): "train",
-            }
-            for future in as_completed(futures):
-                split = futures[future]
-                exc = future.exception()
-                if exc:
-                    raise RuntimeError(f"{split} generation failed: {exc}") from exc
+        self.generate_train_data_examples(_frame, output_dir=output_dir, use_dataframe_format=use_df_format)
+
         self._write_metadata(output_dir / "metadata.json", metadata)
         return output_dir
 
@@ -385,6 +384,9 @@ class GenerateTrainData:
     def build_process_data(self, features):
         features = {key:tf.constant(value) for key,value in features.items() if key != "num_examples"}
         
+        if self.filter_by_model:
+            features = self.filter_data_by_model(features)
+
         preprocessed = {}
         if not self.preprocess_data:
             preprocessed = features
@@ -410,6 +412,14 @@ class GenerateTrainData:
 
         return preprocessed
 
+    def filter_data_by_model(self, data_in:dict):
+        predictions = self.filter_aux_model.predict(data_in)
+        valid_mask  = np.array(predictions)==self.filter_target_label_id
+        valid_ds = {
+          key:value[valid_mask]
+          for key,value in data_in.items()
+        }
+        return valid_ds
     @tf.function
     def _preprocess_batch_data(self, data):
         return self.preprocess_layer(data, training=True)

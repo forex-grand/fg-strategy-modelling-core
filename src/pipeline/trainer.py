@@ -27,7 +27,6 @@ from src.pipeline.pusher import ModelPusher
 from src.models_architecture.base_model import BaseModel
 from src.models_architecture.no_train_model import NoTrainModel
 from src.models_architecture.train_models.simple_model import SimpleNSTrainModel
-from src.models_architecture.train_models.xgb_train_models.xgb_simple import XGBSimple
 from src.models_architecture.train_models.xgb_train_models.xgb_tiny             import XGBTiny
 from src.models_architecture.train_models.xgb_train_models.xgb_simple_shallow   import XGBSimpleShallow
 from src.models_architecture.train_models.xgb_train_models.xgb_simple_slow      import XGBSimpleSlow
@@ -47,6 +46,7 @@ from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments, 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
+CLASS_IDS = [0, 1]
 class Trainer:
     """Runs training for every (symbol, model_type) combination."""
 
@@ -57,7 +57,6 @@ class Trainer:
         "complex-ns": ComplexNSTrainModel,
         "lstm": LSTMModel,
         "cnn-bi-lstm": CNNBiLSTMModel,
-        'xgb-simple':XGBSimple,
         'xgb-tiny'           : XGBTiny,
         'xgb-simple-shallow' : XGBSimpleShallow,
         'xgb-simple-slow'    : XGBSimpleSlow,
@@ -155,8 +154,7 @@ class Trainer:
                 LOGGER.info("+++++++==================================================================++++++++++++")
                 LOGGER.info("+++++++==================================================================++++++++++++")
                 LOGGER.info(f"========RUNNING TEST FOR {symbol}:{model_type}==========")
-                
-                results.append(self._run_single(preprocessor=preprocessor,
+                result = self._run_single(preprocessor=preprocessor,
                                                 symbol=symbol.symbol.strip(),
                                                 group=symbol.group.strip(),
                                                 model_type=model_type,
@@ -165,7 +163,9 @@ class Trainer:
                                                 data_start=data_start,
                                                 data_end=data_end,
                                                 min_target_point=mean_target_min_value,
-                                                ),)
+                                                )
+                print("Result: ",result)
+                results.append(result)
         
         # ── Results Summary ──────────────────────────────────────────────
         passed = [r for r in results if r is not None and r.evaluator_passed]
@@ -341,6 +341,7 @@ class Trainer:
                 sequence_length=sequence_length,
                 data_range=data_range,
                 benchmark_passed=True,
+                features_keys=list(train_ds.element_spec[0].keys())
             )
         except Exception as e:
             LOGGER.warning(f"Errror occured uploading models, Error: {str(e)}")
@@ -386,7 +387,7 @@ class Trainer:
     def preprocess(self, data, preprocess_layer: Layer):
         # data = preprocess_layer(data, training=True)
         target = data.pop('target')
-        return data, tf.one_hot(target, depth=3)
+        return data, tf.one_hot(target, depth=len(CLASS_IDS))
     
     def get_training_data(self, file_pattern: str, preprocessor: Layer, repeat=False):
         import glob

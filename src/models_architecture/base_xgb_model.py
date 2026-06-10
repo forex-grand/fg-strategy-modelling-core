@@ -14,12 +14,11 @@ from src.pipeline.feature_selection import auto_expand_feature_fe, transform_fe
 import pandas as pd
 
 _COMMON = dict(
-    objective="multi:softprob",
-    num_class=3,
+    objective="binary:logistic",
     use_label_encoder=False,
     random_state=42,
     tree_method="hist",
-    eval_metric="mlogloss",
+    eval_metric="logloss",
     verbosity=0,
 )
 
@@ -51,11 +50,11 @@ class XGBTrainModel(BaseModel):
         ##Define evaluation metrics
         precision_buy = keras.metrics.Precision(class_id=0)
         precision_sell= keras.metrics.Precision(class_id=1)
-        precision_hold= keras.metrics.Precision(class_id=2)
+        # precision_hold= keras.metrics.Precision(class_id=2)
         
         recall_buy = keras.metrics.Recall(class_id=0)
         recall_sell= keras.metrics.Recall(class_id=1)
-        recall_hold= keras.metrics.Recall(class_id=2)
+        # recall_hold= keras.metrics.Recall(class_id=2)
         accuracy   = keras.metrics.CategoricalAccuracy()
 
         cardinality = eval_ds.cardinality()
@@ -81,11 +80,11 @@ class XGBTrainModel(BaseModel):
 
             precision_buy.update_state(y_true, y_pred)
             precision_sell.update_state(y_true, y_pred)
-            precision_hold.update_state(y_true, y_pred)
+            # precision_hold.update_state(y_true, y_pred)
 
             recall_buy.update_state(y_true, y_pred)
             recall_sell.update_state(y_true, y_pred)
-            recall_hold.update_state(y_true, y_pred)
+            # recall_hold.update_state(y_true, y_pred)
 
             accuracy.update_state(y_true, y_pred)
 
@@ -129,8 +128,8 @@ class XGBTrainModel(BaseModel):
                 X  = np.concatenate([X, Xd], axis=0)
                 y  = np.concatenate([y, yd], axis=0)                
             else:
-                X = Xd
-                y = yd
+                X = np.array(Xd)
+                y = np.array(yd)
                 first_batch_seen = True
 
         print("Training data collected: ",(datetime.now().timestamp() - ts.timestamp()),"s")
@@ -144,12 +143,14 @@ class XGBTrainModel(BaseModel):
                 Xe = np.concatenate([Xe, Xd], axis=0)
                 ye = np.concatenate([ye, yd], axis=0)
             else:
-                Xe = Xd
-                ye = yd
+                Xe = np.array(Xd)
+                ye = np.array(yd)
                 first_batch_seen = True
 
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
-
+        train_target_dist = np.unique_counts(y)
+        eval_target_dist  = np.unique_counts(ye)
+        print("Target Distribution, Train",train_target_dist," Eval: ",eval_target_dist)
         if str(os.getenv('FEATURE_GENERATOR')).upper()=="OPENFE":
           X = pd.DataFrame(X, columns=train_ds.element_spec[0].keys())
           Xe = pd.DataFrame(Xe, columns=train_ds.element_spec[0].keys())
@@ -165,7 +166,7 @@ class XGBTrainModel(BaseModel):
         xgb_model.fit(X_res, y_res, eval_set=[(X, y),(Xe, ye),], sample_weight=weights,
             verbose=int(os.getenv("XGB_VERBOSE","0")))
         results = xgb_model.evals_result()
-        self.train_loss = results["validation_0"]["mlogloss"][-1]
-        self.eval_loss  = results["validation_1"]["mlogloss"][-1]
+        self.train_loss = results["validation_0"]["logloss"][-1]
+        self.eval_loss  = results["validation_1"]["logloss"][-1]
         self.xgb_model = xgb_model
         return self.xgb_model
