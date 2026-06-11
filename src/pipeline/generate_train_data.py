@@ -717,7 +717,7 @@ def build_process_data(features):
         first_batch_done = False
         for batch in tf_data.take(-1):
             processed = _preprocess_batch_data(batch)
-            print("got result: ",processed)
+        
             for key, values in processed.items():
                 arr = np.atleast_1d(values.numpy())
                 if not first_batch_done:
