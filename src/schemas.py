@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pydantic import BaseModel
 import tensorflow as tf
 from keras import callbacks
@@ -11,6 +11,7 @@ LOGGER = logging.getLogger(__name__)
 class TimeBasedTarget(BaseModel):
     type: str = "time_based_stop"
     stop_minutes: int = 60
+    mode: Literal["points","raw_difference"] = "points"
 
 class PointsBasedTarget(BaseModel):
     type: str = "points_based_target"

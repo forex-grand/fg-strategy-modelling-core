@@ -490,7 +490,7 @@ class GenerateTrainData:
                             axis=-1,
                         ),
                         pos_prices,
-                        points,
+                        points, self.target_model.mode
                     ).astype("float32"),
                     axis=-1,
                 )
@@ -501,7 +501,7 @@ class GenerateTrainData:
                             target_sequences["low"][self.sequence_length :: self.stride],
                             axis=-1,
                         ),
-                        points,
+                        points, self.target_model.mode
                     ).astype("float32"),
                     axis=-1,
                 )
@@ -509,7 +509,7 @@ class GenerateTrainData:
                     self._calculate_points_diff(
                         pos_prices,
                         target_sequences["close"][self.sequence_length :: self.stride, -1],
-                        points,
+                        points, self.target_model.mode
                     ).astype("float32"),
                     axis=-1,
                 )
@@ -527,8 +527,11 @@ class GenerateTrainData:
 
 
 
-    def _calculate_points_diff(self, price_arr1, price_arr2, points_size) -> np.ndarray:
-        return (price_arr1 - price_arr2) // points_size
+    def _calculate_points_diff(self, price_arr1, price_arr2, points_size, mode: str="points") -> np.ndarray:
+        if mode=="points":
+          return (price_arr1 - price_arr2) // points_size
+        else:
+          return (price_arr1 - price_arr2)
 
     def _build_target_data(self, dataframe: pd.DataFrame, symbol_properties: SymbolProperties):
         if isinstance(self.target_model, TimeBasedTarget):
@@ -551,21 +554,21 @@ class GenerateTrainData:
                 "target_highest": np.expand_dims(
                     self._calculate_points_diff(
                         np.max(target_sequences["high"][self.sequence_length :: self.stride], axis=-1),
-                        pos_prices, points,
+                        pos_prices, points, self.target_model.mode,
                     ).astype("float32"), axis=-1,
                 ),
                 "target_lowest": np.expand_dims(
                     self._calculate_points_diff(
                         pos_prices,
                         np.min(target_sequences["low"][self.sequence_length :: self.stride], axis=-1),
-                        points,
+                        points, self.target_model.mode,
                     ).astype("float32"), axis=-1,
                 ),
                 "target_value": np.expand_dims(
                     self._calculate_points_diff(
                         pos_prices,
                         target_sequences["close"][self.sequence_length :: self.stride, -1],
-                        points,
+                        points, self.target_model.mode,
                     ).astype("float32"), axis=-1,
                 ),
             }
