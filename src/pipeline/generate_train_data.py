@@ -334,28 +334,13 @@ class GenerateTrainData:
             ) for idx,chunk_ in enumerate(chunked_indices)
         ]
 
-        with ProcessPoolExecutor(max_workers=_CPU_COUNT) as executor:
+        with ProcessPoolExecutor(max_workers=_CPU_COUNT, initializer=_worker_initializer, initargs=(SEQUENCE_LENGTH,)) as executor:
             futures = {executor.submit(process_save_data_tf, args): args[0] for args in _worker_args}
             for future in as_completed(futures):
                 shard_idx = futures[future]
                 exc = future.exception()
                 if exc:
                     raise RuntimeError(f"Shard {shard_idx} failed: {exc}") from exc
-                    
-        # for idx, chunk_ in enumerate(chunked_indices):
-        #     process_save_data_tf(
-        #       str(output_paths[idx]),
-        #       dataframe.iloc[chunk_],
-        #       symbol_properties=symbol_properties,
-        #     )
-
-            # with ProcessPoolExecutor(max_workers=_CPU_COUNT) as executor:
-            #     futures = {executor.submit(_write_shard_worker, args): args[0] for args in worker_args}
-            #     for future in as_completed(futures):
-            #         shard_idx = futures[future]
-            #         exc = future.exception()
-            #         if exc:
-            #             raise RuntimeError(f"Shard {shard_idx} failed: {exc}") from exc
 
     def _save_sequence_data_to_dataframe(
         self,
@@ -708,6 +693,10 @@ class GenerateTrainData:
         raise ValueError(f"Unsupported timeframe '{timeframe}'.")
 
 
+def _worker_initializer(sequence_length):
+    global PREPROCESS_LAYER
+    PREPROCESS_LAYER = PREPROCESS_LAYER(sequence_length)
+
 # ------------------------------------------------------------------ #
 #  Module-level helpers (must be top-level for pickling by workers)   #
 # ------------------------------------------------------------------ #
@@ -716,7 +705,6 @@ def build_process_data(features):
     
     if FILTER_BY_MODEL:
         features = filter_data_by_model(features)
-
     preprocessed = {}
     if not PREPROCESS_DATA:
         preprocessed = features
@@ -724,12 +712,12 @@ def build_process_data(features):
         tf_data = tf.data.Dataset.from_tensor_slices(features)
         batch_size = int(os.getenv("BATCH_SIZE","128"))
         tf_data = tf_data.batch(batch_size)
-        
         preprocessed = {}
         ##run first batch to store keys
         first_batch_done = False
         for batch in tf_data.take(-1):
             processed = _preprocess_batch_data(batch)
+            print("got result: ",processed)
             for key, values in processed.items():
                 arr = np.atleast_1d(values.numpy())
                 if not first_batch_done:
@@ -753,7 +741,9 @@ def filter_data_by_model(data_in:dict):
 
 @tf.function
 def _preprocess_batch_data(data):
-    return PREPROCESS_LAYER(data, training=True)
+    result = PREPROCESS_LAYER(data, training=True)
+    print("result gotten: ",result.items())
+    return result
 
 def _build_sequence_data(
     dataframe: pd.DataFrame,
@@ -868,12 +858,15 @@ def _window_array(values: np.ndarray, *, dtype: type[np.generic]) -> np.ndarray:
     return np.ascontiguousarray(windows, dtype=dtype)
     
 def process_save_data_tf(args):
+    import tensorflow as tf
     (output_file, df, symbol_properties) = args
-    
+    print('process path')
     features_data = _build_sequence_data(df, symbol_properties)
     data_features = build_process_data(features_data)
+    print("level 1")
     data_keys = list(data_features.keys())
     data_length = len(data_features[data_keys[0]])
+    print("finished process")
     _write_shard_worker((output_file, data_features, SEQUENCE_LENGTH, data_length))
 
 def _partition_into_shards(total: int, num_shards: int) -> list[range]:
@@ -906,7 +899,7 @@ def _write_shard_worker(args: tuple) -> None:
         num_examples,
     ) = args
 
-    import tensorflow as tf  # re-import in worker process
+    # import tensorflow as tf  # re-import in worker process
 
     options = tf.io.TFRecordOptions(compression_type="GZIP", compression_level=1)
 
