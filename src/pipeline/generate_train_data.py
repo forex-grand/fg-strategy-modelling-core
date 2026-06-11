@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import sys
 import json
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -9,12 +9,13 @@ import pandas as pd
 import tensorflow as tf
 import keras
 import os
-import multiprocessing
+
 
 from src.data_manager import DataManager
 from src.settings import Settings
 from src.schemas import TARGET_MODEL_TYPES, TimeBasedTarget, PointsBasedTarget, SymbolProperties
 from src.aux_model_manager import AuxilaryModelManager as AX
+import multiprocessing
 
 _TFRECORD_OPTIONS = tf.io.TFRecordOptions(compression_type="GZIP", compression_level=1)
 _SHARD_COUNT = 16
@@ -316,7 +317,8 @@ class GenerateTrainData:
               symbol_properties,
             ) for idx,chunk_ in enumerate(chunked_indices)
         ]
-        ctx = multiprocessing.get_context("spawn")
+        
+        ctx = multiprocessing.get_context("fork")
         with ProcessPoolExecutor(
             mp_context=ctx,
             max_workers=_CPU_COUNT, 
@@ -387,7 +389,7 @@ class GenerateTrainData:
         
         return output_path
 
-    def _count_targets(self, dataframe: pd.Dataframe):
+    def _count_targets(self, dataframe: pd.DataFrame):
         if self.target_model:
             target_df_len = len(dataframe) - self.target_model.stop_minutes + 1
             targets = max(0, (target_df_len - self.sequence_length)//self.stride + 1)
@@ -863,13 +865,10 @@ def _window_array(values: np.ndarray, *, dtype: type[np.generic]) -> np.ndarray:
 def process_save_data_tf(args):
     import tensorflow as tf
     (output_file, df, symbol_properties) = args
-    print('process path')
     features_data = _build_sequence_data(df, symbol_properties)
     data_features = build_process_data(features_data)
-    print("level 1")
     data_keys = list(data_features.keys())
     data_length = len(data_features[data_keys[0]])
-    print("finished process")
     _write_shard_worker((output_file, data_features, SEQUENCE_LENGTH, data_length))
 
 def _partition_into_shards(total: int, num_shards: int) -> list[range]:
