@@ -22,18 +22,24 @@ _SHARD_COUNT = 16
 _CPU_COUNT = os.cpu_count() or 4
 
 
-class GenerateTrainData:
-    """Generate versioned TensorFlow training and evaluation TFRecords."""
+PREPROCESS_LAYER = None
+PREPROCESS_DATA  = False
+FILTER_BY_MODEL = False
+FILTER_AUX_MODEL = None
+FILTER_LABEL_ID = 0
+SEQUENCE_LENGTH = 0
 
-    BASE_FEATURE_COLUMNS = (
+BASE_FEATURE_COLUMNS = (
         "open", "close", "high", "low",
         "real_volume", "spread", "tick_volume",
     )
 
-    TIMEFRAME_ALIASES = {
+TIMEFRAME_ALIASES = {
         "1m": "1min", "5m": "5min", "15m": "15min",
         "30m": "30min", "1h": "1h", "4h": "4h", "1d": "1d",
     }
+class GenerateTrainData:
+    """Generate versioned TensorFlow training and evaluation TFRecords."""
 
     _WRITE_CHUNK_SIZE = 4_000
 
@@ -50,7 +56,7 @@ class GenerateTrainData:
         target_label: int = 0,
     ) -> None:
         self.settings = Settings()
-        self.feature_columns = self.BASE_FEATURE_COLUMNS
+        self.feature_columns = BASE_FEATURE_COLUMNS
         self.train_base_bucket = train_base_bucket.strip() or "forexgrand-train"
         self.eval_base_bucket = eval_base_bucket.strip() or "forexgrand-eval"
         if not self.train_base_bucket or not self.eval_base_bucket:
@@ -66,6 +72,7 @@ class GenerateTrainData:
         self.eval_properties: SymbolProperties = None
         if preprocess_data and not preprocess_layer:
             raise ValueError("You need to attach a preprocess layer object if preprocess data is True.")
+        
         self.preprocess_data = preprocess_data
         self.preprocess_layer = preprocess_layer
         self.chunk_size = chunk_size
@@ -74,6 +81,17 @@ class GenerateTrainData:
         self.filter_model_id = filter_model_id
         self.filter_target_label_id = target_label
         self.filter_aux_model = None if not filter_by_model else AX(model_id=filter_model_id)
+
+        global PREPROCESS_DATA 
+        PREPROCESS_DATA = preprocess_data
+        global PREPROCESS_LAYER
+        PREPROCESS_LAYER = preprocess_layer
+        global FILTER_BY_MODEL
+        FILTER_BY_MODEL = filter_by_model
+        global FILTER_AUX_MODEL
+        FILTER_AUX_MODEL = self.filter_aux_model
+        global FILTER_LABEL_ID
+        FILTER_LABEL_ID = target_label
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -92,6 +110,14 @@ class GenerateTrainData:
         self.sequence_length = sequence_length
         self.stride = stride
         self.target_model = target_model
+
+        global SEQUENCE_LENGTH
+        SEQUENCE_LENGTH = sequence_length
+        global STRIDE
+        STRIDE = stride
+        global TARGET_MODEL
+        TARGET_MODEL = target_model
+
         use_df_format = use_dataframe_format if use_dataframe_format is not None else self.use_dataframe_format
 
         pair_name = symbol_pair.strip()
@@ -144,6 +170,14 @@ class GenerateTrainData:
         self.sequence_length = sequence_length
         self.stride = stride
         self.target_model = target_model
+        
+        global SEQUENCE_LENGTH
+        SEQUENCE_LENGTH = sequence_length
+        global STRIDE
+        STRIDE = stride
+        global TARGET_MODEL
+        TARGET_MODEL = target_model
+
         use_df_format = use_dataframe_format if use_dataframe_format is not None else self.use_dataframe_format
 
         pair_name = symbol_pair.strip()
@@ -246,10 +280,10 @@ class GenerateTrainData:
     #  Core write path                                                    #
     # ------------------------------------------------------------------ #
 
-    def _build_shard_paths(self, output_dir: Path, split: str, idx_start: int=0) -> list[Path]:
+    def _build_shard_paths(self, output_dir: Path, split: str, idx_start: int=0, end_idx=16) -> list[Path]:
         return [
-            output_dir / f"{split}_{i:05d}_of_{idx_start+_SHARD_COUNT:05d}.gz"
-            for i in range(idx_start, idx_start+_SHARD_COUNT)
+            output_dir / f"{split}_{i:05d}_of_{idx_start+end_idx:05d}.gz"
+            for i in range(idx_start, idx_start+end_idx)
         ]
 
     def _write_examples_sharded(
@@ -275,7 +309,8 @@ class GenerateTrainData:
 
         chunks = max(1, math.ceil(target_counts/self.chunk_size))
         next_start_idx = seq
-        import tqdm
+        chunked_indices = []
+
         for ch_idx in range(chunks):
             start_idx = next_start_idx
             end_idx   = start_idx + chunk_size*self.stride - 1
@@ -284,35 +319,43 @@ class GenerateTrainData:
                 end_idx = end_idx + target_seq_length - 1
             else:
                 next_start_idx = end_idx + 1
-            features_data = self._build_sequence_data(dataframe.iloc[start_idx-seq:end_idx], symbol_properties)
-            num_examples  = features_data['num_examples']
-            examples_counts = end_idx - start_idx
-            data_features = self.build_process_data(features_data)
-            # ✅ Partition examples across shards; each shard owns its example indices
-            output_paths = self._build_shard_paths(output_path, split, ch_idx*_SHARD_COUNT)
-            num_shards = len(output_paths)
-            num_shards = min(num_shards, num_examples)
-            shard_index_ranges = _partition_into_shards(num_examples, num_shards)
 
-            # ✅ Serialize each shard's examples in parallel worker processes
-            worker_args = [
-                (
-                    shard_idx,
-                    str(output_paths[shard_idx]),
-                    shard_index_ranges[shard_idx],
-                    data_features,
-                    seq,
-                )
-                for shard_idx in range(num_shards)
-            ]
+            chunked_indices.append(slice(start_idx - seq, end_idx))
+        
+        output_paths = self._build_shard_paths(output_path, split, 0, len(chunked_indices))
+        num_shards = len(output_paths)
+        num_shards = min(num_shards, num_examples)
 
-            with ProcessPoolExecutor(max_workers=_CPU_COUNT) as executor:
-                futures = {executor.submit(_write_shard_worker, args): args[0] for args in worker_args}
-                for future in as_completed(futures):
-                    shard_idx = futures[future]
-                    exc = future.exception()
-                    if exc:
-                        raise RuntimeError(f"Shard {shard_idx} failed: {exc}") from exc
+        _worker_args = [
+          (
+              str(output_paths[idx]),
+              dataframe.iloc[chunk_],
+              symbol_properties,
+            ) for idx,chunk_ in enumerate(chunked_indices)
+        ]
+
+        with ProcessPoolExecutor(max_workers=_CPU_COUNT) as executor:
+            futures = {executor.submit(process_save_data_tf, args): args[0] for args in _worker_args}
+            for future in as_completed(futures):
+                shard_idx = futures[future]
+                exc = future.exception()
+                if exc:
+                    raise RuntimeError(f"Shard {shard_idx} failed: {exc}") from exc
+                    
+        # for idx, chunk_ in enumerate(chunked_indices):
+        #     process_save_data_tf(
+        #       str(output_paths[idx]),
+        #       dataframe.iloc[chunk_],
+        #       symbol_properties=symbol_properties,
+        #     )
+
+            # with ProcessPoolExecutor(max_workers=_CPU_COUNT) as executor:
+            #     futures = {executor.submit(_write_shard_worker, args): args[0] for args in worker_args}
+            #     for future in as_completed(futures):
+            #         shard_idx = futures[future]
+            #         exc = future.exception()
+            #         if exc:
+            #             raise RuntimeError(f"Shard {shard_idx} failed: {exc}") from exc
 
     def _save_sequence_data_to_dataframe(
         self,
@@ -378,160 +421,7 @@ class GenerateTrainData:
         else:
             return None, None
 
-    # ------------------------------------------------------------------ #
-    #  Sequence builder — kept for external callers only                 #
-    # ------------------------------------------------------------------ #
-    def build_process_data(self, features):
-        features = {key:tf.constant(value) for key,value in features.items() if key != "num_examples"}
-        
-        if self.filter_by_model:
-            features = self.filter_data_by_model(features)
-
-        preprocessed = {}
-        if not self.preprocess_data:
-            preprocessed = features
-        else:
-            tf_data = tf.data.Dataset.from_tensor_slices(features)
-            batch_size = int(os.getenv("BATCH_SIZE","128"))
-            tf_data = tf_data.batch(batch_size)
-            
-            preprocessed = {}
-            ##run first batch to store keys
-            first_batch_done = False
-            for batch in tf_data.take(-1):
-                processed = self._preprocess_batch_data(batch)
-                for key, values in processed.items():
-                    arr = np.atleast_1d(values.numpy())
-                    if not first_batch_done:
-                        preprocessed[key] = arr
-                    else:
-                      preprocessed[key] = np.concatenate([preprocessed[key],arr], axis=0)
-
-                if not first_batch_done:
-                    first_batch_done = True
-
-        return preprocessed
-
-    def filter_data_by_model(self, data_in:dict):
-        predictions = self.filter_aux_model.predict(data_in)
-        valid_mask  = np.array(predictions)==self.filter_target_label_id
-        valid_ds = {
-          key:value[valid_mask]
-          for key,value in data_in.items()
-        }
-        return valid_ds
-    @tf.function
-    def _preprocess_batch_data(self, data):
-        return self.preprocess_layer(data, training=True)
-
-    def _build_sequence_data(
-        self,
-        dataframe: pd.DataFrame,
-        symbol_properties: SymbolProperties | None = None,
-    ) -> dict[str, np.ndarray | int]:
-        if len(dataframe) < self.sequence_length:
-            raise ValueError(
-                f"At least {self.sequence_length} rows are required to create sequences."
-            )
-
-        # ── time ──────────────────────────────────────────────────────────────── #
-        time_values = (
-            dataframe["time"].astype("datetime64[s]").astype("int64").to_numpy(copy=False)
-        ).astype(np.int64, copy=False)
-
-        # ── features ──────────────────────────────────────────────────────────── #
-        feature_matrix = np.stack(
-            [dataframe[col].to_numpy(dtype=np.float32, copy=False) for col in self.feature_columns],
-            axis=1,
-        )
-        windowed = np.lib.stride_tricks.sliding_window_view(
-            feature_matrix, (self.sequence_length, feature_matrix.shape[1])
-        )[:, 0, :, :]
-
-        if self.stride > 1:
-            windowed = windowed[:: self.stride]
-
-        time_windowed = self._window_array(time_values, dtype=np.int64)
-        sequence_data: dict[str, np.ndarray | int] = {"time": time_windowed}
-        for i, col in enumerate(self.feature_columns):
-            sequence_data[col] = np.ascontiguousarray(windowed[:, :, i])
-
-        num_examples = time_windowed.shape[0]
-        # ── targets (optional) ────────────────────────────────────────────────── #
-        if self.target_model is not None:
-            if symbol_properties is None:
-                raise ValueError(
-                    "symbol_properties is required when target_model is set."
-                )
-
-            if isinstance(self.target_model, TimeBasedTarget):
-                required_cols = ["high", "low", "close"]
-                target_seq_length = self.target_model.stop_minutes
-
-                target_sequences = {
-                    col: np.lib.stride_tricks.sliding_window_view(
-                        dataframe[col].to_numpy(), target_seq_length
-                    )
-                    for col in required_cols
-                }
-
-                # Entry price: closing price at the last bar of each input window.
-                # Shape: (N,)
-                close_windows = np.lib.stride_tricks.sliding_window_view(
-                    dataframe["close"].to_numpy(), target_seq_length
-                )
-                pos_prices = close_windows[self.sequence_length - 1 : -1 : self.stride, 0]
-                points = symbol_properties.point_size
-
-                sequence_data["target_highest"] = np.expand_dims(
-                    self._calculate_points_diff(
-                        np.max(
-                            target_sequences["high"][self.sequence_length :: self.stride],
-                            axis=-1,
-                        ),
-                        pos_prices,
-                        points, self.target_model.mode
-                    ).astype("float32"),
-                    axis=-1,
-                )
-                sequence_data["target_lowest"] = np.expand_dims(
-                    self._calculate_points_diff(
-                        pos_prices,
-                        np.min(
-                            target_sequences["low"][self.sequence_length :: self.stride],
-                            axis=-1,
-                        ),
-                        points, self.target_model.mode
-                    ).astype("float32"),
-                    axis=-1,
-                )
-                sequence_data["target_value"] = np.expand_dims(
-                    self._calculate_points_diff(
-                        pos_prices,
-                        target_sequences["close"][self.sequence_length :: self.stride, -1],
-                        points, self.target_model.mode
-                    ).astype("float32"),
-                    axis=-1,
-                )
-                sequence_data["pos_prices"] = pos_prices
-                target_exmps = sequence_data["target_value"].shape[0]
-                num_examples = min(num_examples, target_exmps)
-
-            elif isinstance(self.target_model, PointsBasedTarget):
-                raise NotImplementedError("mode not implemented: use TimeBasedTarget.")
-        for col in sequence_data:
-            sequence_data[col] = sequence_data[col][:num_examples]
-
-        sequence_data["num_examples"] = num_examples
-        return sequence_data
-
-
-
-    def _calculate_points_diff(self, price_arr1, price_arr2, points_size, mode: str="points") -> np.ndarray:
-        if mode=="points":
-          return (price_arr1 - price_arr2) // points_size
-        else:
-          return (price_arr1 - price_arr2)
+    
 
     def _build_target_data(self, dataframe: pd.DataFrame, symbol_properties: SymbolProperties):
         if isinstance(self.target_model, TimeBasedTarget):
@@ -552,20 +442,20 @@ class GenerateTrainData:
             points = symbol_properties.point_size
             target_cols = {
                 "target_highest": np.expand_dims(
-                    self._calculate_points_diff(
+                    _calculate_points_diff(
                         np.max(target_sequences["high"][self.sequence_length :: self.stride], axis=-1),
                         pos_prices, points, self.target_model.mode,
                     ).astype("float32"), axis=-1,
                 ),
                 "target_lowest": np.expand_dims(
-                    self._calculate_points_diff(
+                    _calculate_points_diff(
                         pos_prices,
                         np.min(target_sequences["low"][self.sequence_length :: self.stride], axis=-1),
                         points, self.target_model.mode,
                     ).astype("float32"), axis=-1,
                 ),
                 "target_value": np.expand_dims(
-                    self._calculate_points_diff(
+                    _calculate_points_diff(
                         pos_prices,
                         target_sequences["close"][self.sequence_length :: self.stride, -1],
                         points, self.target_model.mode,
@@ -598,7 +488,7 @@ class GenerateTrainData:
             if "time" not in dataframe.columns and dataframe.index.name == "time"
             else dataframe.copy()
         )
-        required_columns = {"time", *self.BASE_FEATURE_COLUMNS}
+        required_columns = {"time", *BASE_FEATURE_COLUMNS}
         missing_columns = required_columns.difference(normalized.columns)
         if missing_columns:
             missing_list = ", ".join(sorted(missing_columns))
@@ -610,7 +500,7 @@ class GenerateTrainData:
 
         normalized = normalized.sort_values("time").drop_duplicates(subset="time", keep="last")
         normalized = normalized.reset_index(drop=True)
-        return normalized[["time", *self.BASE_FEATURE_COLUMNS]]
+        return normalized[["time", *BASE_FEATURE_COLUMNS]]
 
     def _build_output_dir(self, *, base_bucket, instrument_group, symbol_pair, version_number, split) -> Path:
         return (
@@ -624,11 +514,7 @@ class GenerateTrainData:
             / split
         )
 
-    def _window_array(self, values: np.ndarray, *, dtype: type[np.generic]) -> np.ndarray:
-        windows = np.lib.stride_tricks.sliding_window_view(values, self.sequence_length)
-        if self.stride > 1:
-            windows = windows[:: self.stride]
-        return np.ascontiguousarray(windows, dtype=dtype)
+    
 
     def _build_tf_example(self, sequence_features: dict[str, np.ndarray]) -> tf.train.Example:
         features: dict[str, tf.train.Feature] = {}
@@ -825,6 +711,170 @@ class GenerateTrainData:
 # ------------------------------------------------------------------ #
 #  Module-level helpers (must be top-level for pickling by workers)   #
 # ------------------------------------------------------------------ #
+def build_process_data(features):
+    features = {key:tf.constant(value) for key,value in features.items() if key != "num_examples"}
+    
+    if FILTER_BY_MODEL:
+        features = filter_data_by_model(features)
+
+    preprocessed = {}
+    if not PREPROCESS_DATA:
+        preprocessed = features
+    else:
+        tf_data = tf.data.Dataset.from_tensor_slices(features)
+        batch_size = int(os.getenv("BATCH_SIZE","128"))
+        tf_data = tf_data.batch(batch_size)
+        
+        preprocessed = {}
+        ##run first batch to store keys
+        first_batch_done = False
+        for batch in tf_data.take(-1):
+            processed = _preprocess_batch_data(batch)
+            for key, values in processed.items():
+                arr = np.atleast_1d(values.numpy())
+                if not first_batch_done:
+                    preprocessed[key] = arr
+                else:
+                  preprocessed[key] = np.concatenate([preprocessed[key],arr], axis=0)
+
+            if not first_batch_done:
+                first_batch_done = True
+
+    return preprocessed
+
+def filter_data_by_model(data_in:dict):
+    predictions = FILTER_AUX_MODEL.predict(data_in)
+    valid_mask  = np.array(predictions)==FILTER_LABEL_ID
+    valid_ds = {
+      key:value[valid_mask]
+      for key,value in data_in.items()
+    }
+    return valid_ds
+
+@tf.function
+def _preprocess_batch_data(data):
+    return PREPROCESS_LAYER(data, training=True)
+
+def _build_sequence_data(
+    dataframe: pd.DataFrame,
+    symbol_properties: SymbolProperties | None = None,
+) -> dict[str, np.ndarray | int]:
+    if len(dataframe) < SEQUENCE_LENGTH:
+        raise ValueError(
+            f"At least {SEQUENCE_LENGTH} rows are required to create sequences."
+        )
+
+    # ── time ──────────────────────────────────────────────────────────────── #
+    time_values = (
+        dataframe["time"].astype("datetime64[s]").astype("int64").to_numpy(copy=False)
+    ).astype(np.int64, copy=False)
+
+    # ── features ──────────────────────────────────────────────────────────── #
+    feature_matrix = np.stack(
+        [dataframe[col].to_numpy(dtype=np.float32, copy=False) for col in BASE_FEATURE_COLUMNS],
+        axis=1,
+    )
+    windowed = np.lib.stride_tricks.sliding_window_view(
+        feature_matrix, (SEQUENCE_LENGTH, feature_matrix.shape[1])
+    )[:, 0, :, :]
+
+    if STRIDE > 1:
+        windowed = windowed[:: STRIDE]
+
+    time_windowed = _window_array(time_values, dtype=np.int64)
+    sequence_data: dict[str, np.ndarray | int] = {"time": time_windowed}
+    for i, col in enumerate(BASE_FEATURE_COLUMNS):
+        sequence_data[col] = np.ascontiguousarray(windowed[:, :, i])
+
+    num_examples = time_windowed.shape[0]
+    # ── targets (optional) ────────────────────────────────────────────────── #
+    if TARGET_MODEL is not None:
+        if symbol_properties is None:
+            raise ValueError(
+                "symbol_properties is required when target_model is set."
+            )
+
+        if isinstance(TARGET_MODEL, TimeBasedTarget):
+            required_cols = ["high", "low", "close"]
+            target_seq_length = TARGET_MODEL.stop_minutes
+
+            target_sequences = {
+                col: np.lib.stride_tricks.sliding_window_view(
+                    dataframe[col].to_numpy(), target_seq_length
+                )
+                for col in required_cols
+            }
+
+            # Entry price: closing price at the last bar of each input window.
+            # Shape: (N,)
+            close_windows = np.lib.stride_tricks.sliding_window_view(
+                dataframe["close"].to_numpy(), target_seq_length
+            )
+            pos_prices = close_windows[SEQUENCE_LENGTH - 1 : -1 : STRIDE, 0]
+            points = symbol_properties.point_size
+
+            sequence_data["target_highest"] = np.expand_dims(
+                _calculate_points_diff(
+                    np.max(
+                        target_sequences["high"][SEQUENCE_LENGTH :: STRIDE],
+                        axis=-1,
+                    ),
+                    pos_prices,
+                    points, TARGET_MODEL.mode
+                ).astype("float32"),
+                axis=-1,
+            )
+            sequence_data["target_lowest"] = np.expand_dims(
+                _calculate_points_diff(
+                    pos_prices,
+                    np.min(
+                        target_sequences["low"][SEQUENCE_LENGTH :: STRIDE],
+                        axis=-1,
+                    ),
+                    points, TARGET_MODEL.mode
+                ).astype("float32"),
+                axis=-1,
+            )
+            sequence_data["target_value"] = np.expand_dims(
+                _calculate_points_diff(
+                    pos_prices,
+                    target_sequences["close"][SEQUENCE_LENGTH :: STRIDE, -1],
+                    points, TARGET_MODEL.mode
+                ).astype("float32"),
+                axis=-1,
+            )
+            sequence_data["pos_prices"] = pos_prices
+            target_exmps = sequence_data["target_value"].shape[0]
+            num_examples = min(num_examples, target_exmps)
+
+        elif isinstance(TARGET_MODEL, PointsBasedTarget):
+            raise NotImplementedError("mode not implemented: use TimeBasedTarget.")
+    for col in sequence_data:
+        sequence_data[col] = sequence_data[col][:num_examples]
+
+    sequence_data["num_examples"] = num_examples
+    return sequence_data
+
+def _calculate_points_diff(price_arr1, price_arr2, points_size, mode: str="points") -> np.ndarray:
+    if mode=="points":
+      return (price_arr1 - price_arr2) // points_size
+    else:
+      return (price_arr1 - price_arr2)
+
+def _window_array(values: np.ndarray, *, dtype: type[np.generic]) -> np.ndarray:
+    windows = np.lib.stride_tricks.sliding_window_view(values, SEQUENCE_LENGTH)
+    if STRIDE > 1:
+        windows = windows[:: STRIDE]
+    return np.ascontiguousarray(windows, dtype=dtype)
+    
+def process_save_data_tf(args):
+    (output_file, df, symbol_properties) = args
+    
+    features_data = _build_sequence_data(df, symbol_properties)
+    data_features = build_process_data(features_data)
+    data_keys = list(data_features.keys())
+    data_length = len(data_features[data_keys[0]])
+    _write_shard_worker((output_file, data_features, SEQUENCE_LENGTH, data_length))
 
 def _partition_into_shards(total: int, num_shards: int) -> list[range]:
     """Divide [0, total) into num_shards roughly equal contiguous ranges."""
@@ -850,11 +900,10 @@ def _write_shard_worker(args: tuple) -> None:
     Builds and writes all TFExamples for a single shard.
     """
     (
-        shard_idx,
         output_path,
-        example_range,
         feature_data,
         seq,
+        num_examples,
     ) = args
 
     import tensorflow as tf  # re-import in worker process
@@ -862,7 +911,7 @@ def _write_shard_worker(args: tuple) -> None:
     options = tf.io.TFRecordOptions(compression_type="GZIP", compression_level=1)
 
     with tf.io.TFRecordWriter(output_path, options=options) as writer:
-        for example_idx in example_range:
+        for example_idx in range(num_examples):
             features_data = {key:tf.reshape(values[example_idx], shape=(-1,)).numpy() for key, values in feature_data.items()}
             features: dict[str, tf.train.Example] = {}
             
