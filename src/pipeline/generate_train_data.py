@@ -9,8 +9,7 @@ import pandas as pd
 import tensorflow as tf
 import keras
 import os
-
-from torch import prelu
+import multiprocessing
 
 from src.data_manager import DataManager
 from src.settings import Settings
@@ -21,14 +20,6 @@ _TFRECORD_OPTIONS = tf.io.TFRecordOptions(compression_type="GZIP", compression_l
 _SHARD_COUNT = 16
 _CPU_COUNT = os.cpu_count() or 4
 
-
-PREPROCESS_LAYER = None
-PREPROCESS_DATA  = False
-FILTER_BY_MODEL = False
-FILTER_AUX_MODEL = None
-FILTER_LABEL_ID = 0
-SEQUENCE_LENGTH = 0
-
 BASE_FEATURE_COLUMNS = (
         "open", "close", "high", "low",
         "real_volume", "spread", "tick_volume",
@@ -38,6 +29,16 @@ TIMEFRAME_ALIASES = {
         "1m": "1min", "5m": "5min", "15m": "15min",
         "30m": "30min", "1h": "1h", "4h": "4h", "1d": "1d",
     }
+
+PREPROCESS_INSTANCE = None
+SEQUENCE_LENGTH = 0
+STRIDE = 1
+TARGET_MODEL = None
+PREPROCESS_DATA = False
+FILTER_BY_MODEL = False
+FILTER_LABEL_ID = 0
+FILTER_AUX_MODEL = None
+
 class GenerateTrainData:
     """Generate versioned TensorFlow training and evaluation TFRecords."""
 
@@ -70,6 +71,7 @@ class GenerateTrainData:
         self.target_model: TARGET_MODEL_TYPES = None
         self.train_properties: SymbolProperties = None
         self.eval_properties: SymbolProperties = None
+        self.preprocess_model_path = None
         if preprocess_data and not preprocess_layer:
             raise ValueError("You need to attach a preprocess layer object if preprocess data is True.")
         
@@ -81,17 +83,6 @@ class GenerateTrainData:
         self.filter_model_id = filter_model_id
         self.filter_target_label_id = target_label
         self.filter_aux_model = None if not filter_by_model else AX(model_id=filter_model_id)
-
-        global PREPROCESS_DATA 
-        PREPROCESS_DATA = preprocess_data
-        global PREPROCESS_LAYER
-        PREPROCESS_LAYER = preprocess_layer
-        global FILTER_BY_MODEL
-        FILTER_BY_MODEL = filter_by_model
-        global FILTER_AUX_MODEL
-        FILTER_AUX_MODEL = self.filter_aux_model
-        global FILTER_LABEL_ID
-        FILTER_LABEL_ID = target_label
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -110,13 +101,6 @@ class GenerateTrainData:
         self.sequence_length = sequence_length
         self.stride = stride
         self.target_model = target_model
-
-        global SEQUENCE_LENGTH
-        SEQUENCE_LENGTH = sequence_length
-        global STRIDE
-        STRIDE = stride
-        global TARGET_MODEL
-        TARGET_MODEL = target_model
 
         use_df_format = use_dataframe_format if use_dataframe_format is not None else self.use_dataframe_format
 
@@ -151,7 +135,12 @@ class GenerateTrainData:
             base_bucket=bucket_name, instrument_group=group_name,
             symbol_pair=pair_name, version_number=version_number, split="train",
         )
-
+        ##save preprocess layer to disk
+        self.preprocess_model_path = output_dir / "preprocess_layer.keras"
+        if self.preprocess_data:
+            os.makedirs(output_dir, exist_ok=True)
+            keras.saving.save_model(self.preprocess_layer, self.preprocess_model_path)
+        
         self.generate_train_data_examples(_frame, output_dir=output_dir, use_dataframe_format=use_df_format)
 
         self._write_metadata(output_dir / "metadata.json", metadata)
@@ -171,12 +160,6 @@ class GenerateTrainData:
         self.stride = stride
         self.target_model = target_model
         
-        global SEQUENCE_LENGTH
-        SEQUENCE_LENGTH = sequence_length
-        global STRIDE
-        STRIDE = stride
-        global TARGET_MODEL
-        TARGET_MODEL = target_model
 
         use_df_format = use_dataframe_format if use_dataframe_format is not None else self.use_dataframe_format
 
@@ -333,8 +316,14 @@ class GenerateTrainData:
               symbol_properties,
             ) for idx,chunk_ in enumerate(chunked_indices)
         ]
-
-        with ProcessPoolExecutor(max_workers=_CPU_COUNT, initializer=_worker_initializer, initargs=(SEQUENCE_LENGTH,)) as executor:
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            mp_context=ctx,
+            max_workers=_CPU_COUNT, 
+            initializer=_worker_initializer, 
+            initargs=(self.sequence_length, stride, self.target_model, self.preprocess_data, self.preprocess_model_path,
+                      self.filter_by_model, self.filter_target_label_id, self.filter_model_id)
+            ) as executor:
             futures = {executor.submit(process_save_data_tf, args): args[0] for args in _worker_args}
             for future in as_completed(futures):
                 shard_idx = futures[future]
@@ -404,9 +393,7 @@ class GenerateTrainData:
             targets = max(0, (target_df_len - self.sequence_length)//self.stride + 1)
             return targets, self.target_model.stop_minutes
         else:
-            return None, None
-
-    
+            return None, None    
 
     def _build_target_data(self, dataframe: pd.DataFrame, symbol_properties: SymbolProperties):
         if isinstance(self.target_model, TimeBasedTarget):
@@ -515,7 +502,6 @@ class GenerateTrainData:
         return tf.train.Example(features=tf.train.Features(feature=features))
 
     def _build_metadata(self, *, symbol_pair, instrument_group, train_df, eval_df, target_type=None) -> dict:
-        
         return {
             "data_source": self.train_data_manager.data_source,
             "instrument_group": instrument_group,
@@ -693,12 +679,30 @@ class GenerateTrainData:
         raise ValueError(f"Unsupported timeframe '{timeframe}'.")
 
 
-def _worker_initializer(sequence_length):
-    global PREPROCESS_LAYER
-    PREPROCESS_LAYER = PREPROCESS_LAYER(sequence_length)
+def _worker_initializer(seq_len, stride, target_model, preprocess_data, 
+                         preprocess_model_path, filter_by_model, filter_label_id, filter_model_id):
+    import os
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    import keras
+
+    # Declare ALL globals you want to set
+    global PREPROCESS_INSTANCE, SEQUENCE_LENGTH, STRIDE, TARGET_MODEL
+    global PREPROCESS_DATA, FILTER_BY_MODEL, FILTER_LABEL_ID
+
+    SEQUENCE_LENGTH = seq_len
+    STRIDE          = stride
+    TARGET_MODEL    = target_model
+    PREPROCESS_DATA = preprocess_data
+    FILTER_BY_MODEL = filter_by_model
+    FILTER_LABEL_ID = filter_label_id
+
+    if preprocess_data and preprocess_model_path:
+        PREPROCESS_INSTANCE = keras.saving.load_model(preprocess_model_path)
+
+    print(f"[WORKER INIT] PID={os.getpid()} seq={SEQUENCE_LENGTH} model={PREPROCESS_INSTANCE}", flush=True)
 
 # ------------------------------------------------------------------ #
-#  Module-level helpers (must be top-level for pickling by workers)   #
+#  Module-level helpers (must be top-level for pickling by workers)  #
 # ------------------------------------------------------------------ #
 def build_process_data(features):
     features = {key:tf.constant(value) for key,value in features.items() if key != "num_examples"}
@@ -741,8 +745,7 @@ def filter_data_by_model(data_in:dict):
 
 @tf.function
 def _preprocess_batch_data(data):
-    result = PREPROCESS_LAYER(data, training=True)
-    print("result gotten: ",result.items())
+    result = PREPROCESS_INSTANCE(data, training=True)
     return result
 
 def _build_sequence_data(
