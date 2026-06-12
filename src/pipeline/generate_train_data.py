@@ -327,7 +327,7 @@ class GenerateTrainData:
           try:
             process_save_data_tf(arg)
           except Exception as e:
-            print("Error encountered processing: ",arg[0])
+            print("Error encountered processing: ",arg[0],": Error-",str(e))
 
     def _save_sequence_data_to_dataframe(
         self,
@@ -719,13 +719,12 @@ def build_process_data(features):
     else:
         tf_data = tf.data.Dataset.from_tensor_slices(features)
         batch_size = int(os.getenv("BATCH_SIZE","128"))
-        tf_data = tf_data.batch(batch_size)
+        processed = tf_data.batch(batch_size).map(_preprocess_batch_data, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
         preprocessed = {}
         ##run first batch to store keys
         first_batch_done = False
-        for batch in tf_data.take(-1):
-            processed = _preprocess_batch_data(batch)        
-            for key, values in processed.items():
+        for batch in processed.take(-1): 
+            for key, values in batch.items():
                 arr = np.atleast_1d(values.numpy())
                 if not first_batch_done:
                     preprocessed[key] = arr
