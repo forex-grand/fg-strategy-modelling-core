@@ -2,11 +2,13 @@ from __future__ import annotations
 import sys
 import json
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+import multiprocessing as mp
 from pathlib import Path
 from typing import Optional
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from tensorflow.python.eager.context import executor
 tf.config.threading.set_inter_op_parallelism_threads(1)
 tf.config.threading.set_intra_op_parallelism_threads(1)
 import keras
@@ -17,7 +19,6 @@ from src.data_manager import DataManager
 from src.settings import Settings
 from src.schemas import TARGET_MODEL_TYPES, TimeBasedTarget, PointsBasedTarget, SymbolProperties
 from src.aux_model_manager import AuxilaryModelManager as AX
-import multiprocessing
 
 _TFRECORD_OPTIONS = tf.io.TFRecordOptions(compression_type="GZIP", compression_level=1)
 _SHARD_COUNT = 16
@@ -320,20 +321,13 @@ class GenerateTrainData:
             ) for idx,chunk_ in enumerate(chunked_indices)
         ]
         
-        ctx = multiprocessing.get_context("fork")
-        with ProcessPoolExecutor(
-            mp_context=ctx,
-            max_workers=_CPU_COUNT, 
-            initializer=_worker_initializer, 
-            initargs=(self.sequence_length, stride, self.target_model, self.preprocess_data, self.preprocess_model_path,
-                      self.filter_by_model, self.filter_target_label_id, self.filter_model_id)
-            ) as executor:
-            futures = {executor.submit(process_save_data_tf, args): args[0] for args in _worker_args}
-            for future in as_completed(futures):
-                shard_idx = futures[future]
-                exc = future.exception()
-                if exc:
-                    raise RuntimeError(f"Shard {shard_idx} failed: {exc}") from exc
+        _worker_initializer(self.sequence_length, stride, self.target_model, self.preprocess_data, self.preprocess_model_path,
+                           self.filter_by_model, self.filter_target_label_id, self.filter_model_id)
+        for arg in _worker_args:
+          try:
+            process_save_data_tf(arg)
+          except Exception as e:
+            print("Error encountered processing: ",arg[0])
 
     def _save_sequence_data_to_dataframe(
         self,
@@ -686,12 +680,13 @@ class GenerateTrainData:
 def _worker_initializer(seq_len, stride, target_model, preprocess_data, 
                          preprocess_model_path, filter_by_model, filter_label_id, filter_model_id):
     import os
+    import tensorflow as tf
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
     import keras
 
     # Declare ALL globals you want to set
     global PREPROCESS_INSTANCE, SEQUENCE_LENGTH, STRIDE, TARGET_MODEL
-    global PREPROCESS_DATA, FILTER_BY_MODEL, FILTER_LABEL_ID
+    global PREPROCESS_DATA, FILTER_BY_MODEL, FILTER_LABEL_ID, FILTER_AUX_MODEL
 
     SEQUENCE_LENGTH = seq_len
     STRIDE          = stride
@@ -699,9 +694,13 @@ def _worker_initializer(seq_len, stride, target_model, preprocess_data,
     PREPROCESS_DATA = preprocess_data
     FILTER_BY_MODEL = filter_by_model
     FILTER_LABEL_ID = filter_label_id
+    
 
     if preprocess_data and preprocess_model_path:
         PREPROCESS_INSTANCE = keras.saving.load_model(preprocess_model_path)
+
+    if filter_by_model and filter_model_id:
+        FILTER_AUX_MODEL = AX(filter_model_id)
 
     print(f"[WORKER INIT] PID={os.getpid()} seq={SEQUENCE_LENGTH} model={PREPROCESS_INSTANCE}", flush=True)
 
@@ -713,6 +712,7 @@ def build_process_data(features):
     
     if FILTER_BY_MODEL:
         features = filter_data_by_model(features)
+
     preprocessed = {}
     if not PREPROCESS_DATA:
         preprocessed = features
@@ -724,8 +724,7 @@ def build_process_data(features):
         ##run first batch to store keys
         first_batch_done = False
         for batch in tf_data.take(-1):
-            processed = _preprocess_batch_data(batch)
-        
+            processed = _preprocess_batch_data(batch)        
             for key, values in processed.items():
                 arr = np.atleast_1d(values.numpy())
                 if not first_batch_done:
@@ -865,7 +864,6 @@ def _window_array(values: np.ndarray, *, dtype: type[np.generic]) -> np.ndarray:
     return np.ascontiguousarray(windows, dtype=dtype)
     
 def process_save_data_tf(args):
-    import tensorflow as tf
     (output_file, df, symbol_properties) = args
     features_data = _build_sequence_data(df, symbol_properties)
     data_features = build_process_data(features_data)
