@@ -205,6 +205,12 @@ class GenerateTrainData:
             symbol_pair=pair_name, version_number=version_number, split="eval",
         )
 
+        ##save preprocess layer to disk
+        self.preprocess_model_path = train_dir / "preprocess_layer.keras"
+        if self.preprocess_data:
+            os.makedirs(train_dir, exist_ok=True)
+            keras.saving.save_model(self.preprocess_layer, self.preprocess_model_path)
+        
         # ✅ Run train + eval generation concurrently on separate threads
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = {
