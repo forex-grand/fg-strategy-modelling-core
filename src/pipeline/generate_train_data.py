@@ -807,40 +807,46 @@ def _build_sequence_data(
             )
             pos_prices = close_windows[SEQUENCE_LENGTH - 1 : -1 : STRIDE, 0]
             points = symbol_properties.point_size
-
-            sequence_data["target_highest"] = np.expand_dims(
-                _calculate_points_diff(
-                    np.max(
-                        target_sequences["high"][SEQUENCE_LENGTH :: STRIDE],
-                        axis=-1,
-                    ),
-                    pos_prices,
-                    points, TARGET_MODEL.mode
-                ).astype("float32"),
-                axis=-1,
-            )
-            sequence_data["target_lowest"] = np.expand_dims(
-                _calculate_points_diff(
-                    pos_prices,
-                    np.min(
-                        target_sequences["low"][SEQUENCE_LENGTH :: STRIDE],
-                        axis=-1,
-                    ),
-                    points, TARGET_MODEL.mode
-                ).astype("float32"),
-                axis=-1,
-            )
-            sequence_data["target_value"] = np.expand_dims(
-                _calculate_points_diff(
-                    pos_prices,
-                    target_sequences["close"][SEQUENCE_LENGTH :: STRIDE, -1],
-                    points, TARGET_MODEL.mode
-                ).astype("float32"),
-                axis=-1,
-            )
-            sequence_data["pos_prices"] = pos_prices
-            target_exmps = sequence_data["target_value"].shape[0]
-            num_examples = min(num_examples, target_exmps)
+            if TARGET_MODEL.mode != "prices":
+                sequence_data["target_highest"] = np.expand_dims(
+                    _calculate_points_diff(
+                        np.max(
+                            target_sequences["high"][SEQUENCE_LENGTH :: STRIDE],
+                            axis=-1,
+                        ),
+                        pos_prices,
+                        points, TARGET_MODEL.mode
+                    ).astype("float32"),
+                    axis=-1,
+                )
+                sequence_data["target_lowest"] = np.expand_dims(
+                    _calculate_points_diff(
+                        pos_prices,
+                        np.min(
+                            target_sequences["low"][SEQUENCE_LENGTH :: STRIDE],
+                            axis=-1,
+                        ),
+                        points, TARGET_MODEL.mode
+                    ).astype("float32"),
+                    axis=-1,
+                )
+                sequence_data["target_value"] = np.expand_dims(
+                    _calculate_points_diff(
+                        pos_prices,
+                        target_sequences["close"][SEQUENCE_LENGTH :: STRIDE, -1],
+                        points, TARGET_MODEL.mode
+                    ).astype("float32"),
+                    axis=-1,
+                )
+                sequence_data["pos_prices"] = pos_prices
+                target_exmps = sequence_data["target_value"].shape[0]
+                num_examples = min(num_examples, target_exmps)
+            elif TARGET_MODEL.mode=="prices":
+                sequence_data['target_high'] = target_sequences["high"][SEQUENCE_LENGTH :: STRIDE]
+                sequence_data['target_low']  = target_sequences['low'][SEQUENCE_LENGTH :: STRIDE]
+                sequence_data['target_close']= target_sequences['close'][SEQUENCE_LENGTH :: STRIDE]
+                target_exmps = sequence_data["target_high"].shape[0]
+                num_examples = min(num_examples, target_exmps)
 
         elif isinstance(TARGET_MODEL, PointsBasedTarget):
             raise NotImplementedError("mode not implemented: use TimeBasedTarget.")

@@ -9,9 +9,16 @@ LOGGER = logging.getLogger(__name__)
 
 
 class TimeBasedTarget(BaseModel):
+    """
+      modes=>
+        points: calculates the points difference, returns (target_value, target_highest, target_lowest)
+        raw_difference: (open - highest/lowest), returns (target_value, target_highest, target_lowest)
+        prices: high,low,close price series through the stop minutes. returns sequences(target_high, target_low, target_close)
+    """
     type: str = "time_based_stop"
     stop_minutes: int = 60
-    mode: Literal["points","raw_difference"] = "points"
+    mode: Literal["points","raw_difference","prices"] = "points" 
+    
 
 class PointsBasedTarget(BaseModel):
     type: str = "points_based_target"
