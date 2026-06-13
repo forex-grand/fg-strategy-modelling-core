@@ -360,7 +360,9 @@ class GenerateTrainData:
         next_start_idx = seq
         
         all_sequence_data = {}
-        
+        _worker_initializer(self.sequence_length, stride, self.target_model, self.preprocess_data, self.preprocess_model_path,
+                           self.filter_by_model, self.filter_target_label_id, self.filter_model_id)
+       
         for ch_idx in range(chunks):
             start_idx = next_start_idx
             end_idx = start_idx + chunk_size * self.stride - 1
@@ -370,9 +372,9 @@ class GenerateTrainData:
             else:
                 next_start_idx = end_idx + 1
             
-            features_data = self._build_sequence_data(dataframe.iloc[start_idx - seq:end_idx], symbol_properties)
-            data_features = self.build_process_data(features_data)
-            
+            features_data = _build_sequence_data(dataframe.iloc[start_idx - seq:end_idx], symbol_properties)
+            data_features = build_process_data(features_data)
+           
             # Accumulate sequence data
             for key, values in data_features.items():
                 if key != "num_examples":
@@ -381,7 +383,7 @@ class GenerateTrainData:
                         all_sequence_data[key] = values_np
                     else:
                         all_sequence_data[key] = np.concatenate([all_sequence_data[key], values_np], axis=0)
-        
+
         # Convert to DataFrame
         result_df = pd.DataFrame(all_sequence_data)
         
