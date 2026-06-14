@@ -120,8 +120,8 @@ class Trainer:
         results: list[TrainingResult] = []
         for symbol in self.symbols:
             preprocessor = self.preprocessor_class(sequence_length=self.sequence_length)
-            use_aux_model = True if symbol.aux_model_id else False
-            aux_model_id  = symbol.aux_model_id            
+            use_aux_model = True if symbol.aux_model_id is not None else False
+            aux_model_id  = symbol.aux_model_id
             self.data_gen = GenerateTrainData(
               train_base_bucket=self.config.train_bucket_name, 
               eval_base_bucket=self.config.eval_bucket_name,
@@ -132,6 +132,7 @@ class Trainer:
               filter_model_id=aux_model_id,
               target_label=symbol.aux_target_label,
             )
+            
             target_data = self.data_gen.load_target_data(
                 bucket_name=self.config.train_bucket_name, 
                 symbol_pair=symbol.symbol.strip(),

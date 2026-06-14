@@ -211,17 +211,8 @@ class GenerateTrainData:
             os.makedirs(train_dir, exist_ok=True)
             keras.saving.save_model(self.preprocess_layer, self.preprocess_model_path)
         
-        # ✅ Run train + eval generation concurrently on separate threads
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = {
-                pool.submit(self.generate_train_data_examples, train_frame, output_dir=train_dir, use_dataframe_format=use_df_format): "train",
-                pool.submit(self.generate_eval_data_examples, eval_frame, output_dir=eval_dir, use_dataframe_format=use_df_format): "eval",
-            }
-            for future in as_completed(futures):
-                split = futures[future]
-                exc = future.exception()
-                if exc:
-                    raise RuntimeError(f"{split} generation failed: {exc}") from exc
+        self.generate_train_data_examples(train_frame, output_dir=train_dir, use_dataframe_format=use_df_format)
+        self.generate_eval_data_examples(eval_frame, output_dir=eval_dir, use_dataframe_format=use_df_format)         
 
         self._write_metadata(train_dir / "metadata.json", metadata)
         self._write_metadata(eval_dir / "metadata.json", metadata)
@@ -334,6 +325,7 @@ class GenerateTrainData:
             process_save_data_tf(arg)
           except Exception as e:
             print("Error encountered processing: ",arg[0],": Error-",str(e))
+            raise e
 
     def _save_sequence_data_to_dataframe(
         self,
@@ -702,15 +694,14 @@ def _worker_initializer(seq_len, stride, target_model, preprocess_data,
     PREPROCESS_DATA = preprocess_data
     FILTER_BY_MODEL = filter_by_model
     FILTER_LABEL_ID = filter_label_id
-    
 
-    if preprocess_data and preprocess_model_path:
+    if preprocess_data and preprocess_model_path and not PREPROCESS_INSTANCE:
         PREPROCESS_INSTANCE = keras.saving.load_model(preprocess_model_path)
 
-    if filter_by_model and filter_model_id:
+    if filter_by_model and filter_model_id and not FILTER_AUX_MODEL:
         FILTER_AUX_MODEL = AX(filter_model_id)
 
-    print(f"[WORKER INIT] PID={os.getpid()} seq={SEQUENCE_LENGTH} model={PREPROCESS_INSTANCE}", flush=True)
+    print(f"[WORKER INIT] PID={os.getpid()} seq={SEQUENCE_LENGTH} model={PREPROCESS_INSTANCE}, filter_modeel={FILTER_AUX_MODEL}", flush=True)
 
 # ------------------------------------------------------------------ #
 #  Module-level helpers (must be top-level for pickling by workers)  #
@@ -741,7 +732,6 @@ def build_process_data(features):
 
             if not first_batch_done:
                 first_batch_done = True
-
     return preprocessed
 
 def filter_data_by_model(data_in:dict):
