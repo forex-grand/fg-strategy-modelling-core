@@ -51,11 +51,9 @@ class XGBTrainModel(BaseModel):
         ##Define evaluation metrics
         precision_buy = keras.metrics.Precision(class_id=0)
         precision_sell= keras.metrics.Precision(class_id=1)
-        # precision_hold= keras.metrics.Precision(class_id=2)
         
         recall_buy = keras.metrics.Recall(class_id=0)
         recall_sell= keras.metrics.Recall(class_id=1)
-        # recall_hold= keras.metrics.Recall(class_id=2)
         accuracy   = keras.metrics.CategoricalAccuracy()
 
         cardinality = eval_ds.cardinality()
@@ -76,16 +74,16 @@ class XGBTrainModel(BaseModel):
               X = transform_fe(X, self.feature_transformer)
 
             y_true = tf.cast(tf.squeeze((batch_y)), tf.int32)
-            y_pred = tf.squeeze(tf.cast(self.xgb_model.predict(X), tf.int32))
+            y_pred = tf.squeeze(tf.cast(self.xgb_model.predict(X), tf.int32))            
             y_true = tf.one_hot(y_true, depth=self.num_classes)
+            if y_pred.ndim==1:
+                y_pred = tf.one_hot(y_pred, depth=self.num_classes)
 
             precision_buy.update_state(y_true, y_pred)
             precision_sell.update_state(y_true, y_pred)
-            # precision_hold.update_state(y_true, y_pred)
 
             recall_buy.update_state(y_true, y_pred)
             recall_sell.update_state(y_true, y_pred)
-            # recall_hold.update_state(y_true, y_pred)
 
             accuracy.update_state(y_true, y_pred)
 
