@@ -45,6 +45,9 @@ class ModelBuildTrainArguments(BaseModel):
 class SymbolIn(BaseModel):
     symbol: str
     group: str
+    aux_model_id: Optional[str] = None
+    aux_target_label: int = 0
+
 
 @dataclass
 class TrainingResult:
