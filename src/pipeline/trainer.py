@@ -288,7 +288,8 @@ class Trainer:
                     )
               
             except Exception as e:
-                LOGGER.warning(F"Encountered: {str(e)}")
+                LOGGER.warning(f"Encountered: {str(e)}")
+                # raise e
                 return TrainingResult(
                         symbol="None",
                         model_type=model_type,
@@ -401,7 +402,7 @@ class Trainer:
     def preprocess(self, data, preprocess_layer: Layer):
         # data = preprocess_layer(data, training=True)
         target = data.pop('target')
-        return data, tf.one_hot(target, depth=len(CLASS_IDS))
+        return data, target
     
     def get_training_data(self, file_pattern: str, preprocessor: Layer, repeat=False):
         import glob
