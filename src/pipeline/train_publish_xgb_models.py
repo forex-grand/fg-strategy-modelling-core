@@ -37,9 +37,9 @@ def train_publish_xgb_models(preprocess_class:PreprocessBase, target_model:TARGE
 
   train_model_types = [
       # ── XGBoost models ───────────────────────────────
-      'xgb-tiny', 'xgb-simple-shallow', 'xgb-simple-slow',
-      'xgb-balanced', 'xgb-l1-regularised', 'xgb-l2-regularised', 'xgb-gamma-pruned',
-      'xgb-column-sampled', 'xgb-deep-trees', 'xgb-high-capacity',
+      # 'xgb-tiny', 'xgb-simple-shallow', 'xgb-simple-slow',
+      # 'xgb-balanced', 'xgb-l1-regularised', 'xgb-l2-regularised', 'xgb-gamma-pruned',
+      # 'xgb-column-sampled', 'xgb-deep-trees', 'xgb-high-capacity',
       'xgb-elastic-net', 'xgb-high-child-weight', 'xgb-max-complex',
   ]
   trainer = TR(symbols=symbols,sequence_length=sequence_length, model_types=train_model_types,

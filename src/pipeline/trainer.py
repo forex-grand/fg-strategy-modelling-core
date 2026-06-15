@@ -114,11 +114,25 @@ class Trainer:
         self.target_percentile = target_percentile
 
 
+
     def run(self) -> list[TrainingResult]:
         """Execute training for all requested model types."""
         results: list[TrainingResult] = []
         for symbol in self.symbols:
             preprocessor = self.preprocessor_class(sequence_length=self.sequence_length)
+            use_aux_model = True if symbol.aux_model_id is not None else False
+            aux_model_id  = symbol.aux_model_id
+            self.data_gen = GenerateTrainData(
+              train_base_bucket=self.config.train_bucket_name, 
+              eval_base_bucket=self.config.eval_bucket_name,
+              preprocess_data=True, 
+              preprocess_layer=self.preprocessor,
+              use_dataframe_format=self.use_dataframe_format,
+              filter_by_model=use_aux_model,
+              filter_model_id=aux_model_id,
+              target_label=symbol.aux_target_label,
+            )
+            
             target_data = self.data_gen.load_target_data(
                 bucket_name=self.config.train_bucket_name, 
                 symbol_pair=symbol.symbol.strip(),
@@ -274,7 +288,8 @@ class Trainer:
                     )
               
             except Exception as e:
-                LOGGER.warning(F"Encountered: {str(e)}")
+                LOGGER.warning(f"Encountered: {str(e)}")
+                # raise e
                 return TrainingResult(
                         symbol="None",
                         model_type=model_type,
@@ -387,7 +402,7 @@ class Trainer:
     def preprocess(self, data, preprocess_layer: Layer):
         # data = preprocess_layer(data, training=True)
         target = data.pop('target')
-        return data, tf.one_hot(target, depth=len(CLASS_IDS))
+        return data, target
     
     def get_training_data(self, file_pattern: str, preprocessor: Layer, repeat=False):
         import glob

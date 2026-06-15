@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 cpu_counts = os.cpu_count()
 
 class AuxilaryModelManager:
-  def __init__(self, model_id) -> None:
+  def __init__(self, model_id, output_path: str=None) -> None:
       self.config = Settings()
       self.storage_client = getStorageClient(self.config.s3_storage_option)(self.config)
       self.storage_bucket = self.config.models_bucket
-      self.data_directory = Path(self.config.data_directory).expanduser().resolve() / 'models'
+      self.data_directory = Path(output_path) / 'models' if output_path is not None else Path(self.config.data_directory).expanduser().resolve() / 'models'
       self._client = self.storage_client.client
       self.model  = self.fetch_model_from_storage(model_id=model_id)
 
@@ -137,14 +137,15 @@ class AuxilaryModelManager:
   def _ohlc_to_feature_dict(self, row_dict) -> dict:
       length = len(row_dict['time'])
       sequence_length = self.model['metadata']['sequence_length']
-      time_  = row_dict['time'].numpy()[-sequence_length:]
-      open_  = row_dict['open'].numpy()[-sequence_length:]
-      high_  = row_dict['high'].numpy()[-sequence_length:]
-      close_ = row_dict['close'].numpy()[-sequence_length:]
-      low_   = row_dict['low'].numpy()[-sequence_length:]
-      spread_      = row_dict['spread'].numpy()[-sequence_length:]
-      tick_volume_ = row_dict['tick_volume'].numpy()[-sequence_length:]
-      real_volume_ = row_dict['real_volume'].numpy()[-sequence_length:]
+      time_  = row_dict['time'].numpy()[:,-sequence_length:]
+      open_  = row_dict['open'].numpy()[:,-sequence_length:]
+      high_  = row_dict['high'].numpy()[:,-sequence_length:]
+      close_ = row_dict['close'].numpy()[:,-sequence_length:]
+      low_   = row_dict['low'].numpy()[:,-sequence_length:]
+      spread_      = row_dict['spread'].numpy()[:,-sequence_length:]
+      tick_volume_ = row_dict['tick_volume'].numpy()[:,-sequence_length:]
+      real_volume_ = row_dict['real_volume'].numpy()[:,-sequence_length:]
+      
       feature_dict = [tf.train.Example(features=tf.train.Features(feature={
           "time": tf.train.Feature(int64_list=tf.train.Int64List(value=time_[i])),
           "open": tf.train.Feature(float_list=tf.train.FloatList(value=open_[i])),
