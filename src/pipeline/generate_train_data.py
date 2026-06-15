@@ -101,6 +101,7 @@ class GenerateTrainData:
         hot_reload: bool = False,
         target_model: TARGET_MODEL_TYPES = None,
         use_dataframe_format: bool | None = None,
+        split: str = "train",
     ) -> Path:
         self.sequence_length = sequence_length
         self.stride = stride
@@ -137,7 +138,7 @@ class GenerateTrainData:
         )
         output_dir = self._build_output_dir(
             base_bucket=bucket_name, instrument_group=group_name,
-            symbol_pair=pair_name, version_number=version_number, split="train",
+            symbol_pair=pair_name, version_number=version_number, split=split,
         )
         ##save preprocess layer to disk
         self.preprocess_model_path = output_dir / "preprocess_layer.keras"

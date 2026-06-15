@@ -9,7 +9,6 @@ import keras
 import uuid
 import zipfile
 from src.settings import Settings
-from src.models_architecture.base_model import BaseModel
 from src.storage.utils import getStorageClient
 from xgboost import XGBClassifier
 import joblib
