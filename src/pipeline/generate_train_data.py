@@ -124,7 +124,7 @@ class GenerateTrainData:
         )
         existing_paths = self._find_existing_version_path_single(
             symbol_pair=pair_name, instrument_group=group_name, metadata=metadata,
-            bucket_name=bucket_name,
+            bucket_name=bucket_name,  split=split,
         )
         
         if existing_paths is not None and not hot_reload:
@@ -571,7 +571,7 @@ class GenerateTrainData:
         )
         return (max(version_numbers) + 1) if version_numbers else 1
 
-    def _find_existing_version_path_single(self, *, symbol_pair, instrument_group, metadata, bucket_name: str):
+    def _find_existing_version_path_single(self, *, symbol_pair, instrument_group, metadata, bucket_name: str, split:str="train"):
         train_root = self._build_version_root(
             base_bucket=bucket_name,
             instrument_group=instrument_group, symbol_pair=symbol_pair,
@@ -586,7 +586,7 @@ class GenerateTrainData:
         )
 
         for version_number in common_versions:
-            train_dir = train_root / str(version_number) / "train"
+            train_dir = train_root / str(version_number) / split
             train_metadata_path = train_dir / "metadata.json"
 
             train_shards = list(train_dir.glob("train_*.gz"))
