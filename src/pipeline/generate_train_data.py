@@ -1,7 +1,7 @@
 from __future__ import annotations
 import sys
 import json
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import multiprocessing as mp
 from pathlib import Path
 from typing import Optional
@@ -59,6 +59,7 @@ class GenerateTrainData:
         filter_by_model: bool = False,
         filter_model_id: Optional[str] = None,
         target_label: int = 0,
+        write_parallelism: Optional[int] = None,
     ) -> None:
         self.settings = Settings()
         self.feature_columns = BASE_FEATURE_COLUMNS
@@ -87,6 +88,7 @@ class GenerateTrainData:
         self.filter_model_id = filter_model_id
         self.filter_target_label_id = target_label
         self.filter_aux_model = None if not filter_by_model else AX(model_id=filter_model_id)
+        self.write_parallelism = write_parallelism
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -311,22 +313,66 @@ class GenerateTrainData:
         num_shards = len(output_paths)
         num_shards = min(num_shards, num_examples)
 
-        _worker_args = [
-          (
-              str(output_paths[idx]),
-              dataframe.iloc[chunk_],
-              symbol_properties,
-            ) for idx,chunk_ in enumerate(chunked_indices)
-        ]
-        
         _worker_initializer(self.sequence_length, stride, self.target_model, self.preprocess_data, self.preprocess_model_path,
                            self.filter_by_model, self.filter_target_label_id, self.filter_model_id)
-        for arg in _worker_args:
-          try:
-            process_save_data_tf(arg)
-          except Exception as e:
-            print("Error encountered processing: ",arg[0],": Error-",str(e))
-            raise e
+
+        write_parallelism = self._resolve_write_parallelism(len(chunked_indices))
+        print("Write parallelism:", write_parallelism)
+
+        def build_arg(idx: int, chunk_: slice) -> tuple[str, pd.DataFrame, SymbolProperties]:
+            return (
+                str(output_paths[idx]),
+                dataframe.iloc[chunk_],
+                symbol_properties,
+            )
+
+        if write_parallelism == 1:
+            for idx, chunk_ in enumerate(chunked_indices):
+                arg = build_arg(idx, chunk_)
+                try:
+                    process_save_data_tf(arg)
+                except Exception as e:
+                    print("Error encountered processing: ", arg[0], ": Error-", str(e))
+                    raise e
+            return
+
+        pending = {}
+        max_pending = write_parallelism * 2
+        with ThreadPoolExecutor(max_workers=write_parallelism) as pool:
+            for idx, chunk_ in enumerate(chunked_indices):
+                while len(pending) >= max_pending:
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        output_file = pending.pop(future)
+                        try:
+                            future.result()
+                        except Exception as e:
+                            print("Error encountered processing: ", output_file, ": Error-", str(e))
+                            raise e
+
+                arg = build_arg(idx, chunk_)
+                pending[pool.submit(process_save_data_tf, arg)] = arg[0]
+
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    output_file = pending.pop(future)
+                    try:
+                        future.result()
+                    except Exception as e:
+                        print("Error encountered processing: ", output_file, ": Error-", str(e))
+                        raise e
+
+    def _resolve_write_parallelism(self, chunks: int) -> int:
+        if chunks <= 1:
+            return 1
+
+        configured = self.write_parallelism
+        if configured is None:
+            env_value = os.getenv("WRITE_PARALLELISM")
+            configured = int(env_value) if env_value else min(_CPU_COUNT, chunks)
+
+        return max(1, min(int(configured), chunks))
 
     def _save_sequence_data_to_dataframe(
         self,
@@ -720,19 +766,16 @@ def build_process_data(features):
         tf_data = tf.data.Dataset.from_tensor_slices(features)
         batch_size = int(os.getenv("BATCH_SIZE","128"))
         processed = tf_data.batch(batch_size).map(_preprocess_batch_data, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
-        preprocessed = {}
-        ##run first batch to store keys
-        first_batch_done = False
+        batch_values = {}
         for batch in processed.take(-1): 
             for key, values in batch.items():
                 arr = np.atleast_1d(values.numpy())
-                if not first_batch_done:
-                    preprocessed[key] = arr
-                else:
-                  preprocessed[key] = np.concatenate([preprocessed[key],arr], axis=0)
+                batch_values.setdefault(key, []).append(arr)
 
-            if not first_batch_done:
-                first_batch_done = True
+        preprocessed = {
+            key: np.concatenate(values, axis=0)
+            for key, values in batch_values.items()
+        }
     return preprocessed
 
 def filter_data_by_model(data_in:dict):
