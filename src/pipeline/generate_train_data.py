@@ -54,7 +54,7 @@ class GenerateTrainData:
         eval_base_bucket: str = "forexgrand-eval",
         preprocess_data: bool = False,
         preprocess_layer: Optional[keras.Model] = None,
-        chunk_size: int = 10000,
+        chunk_size: int = 1000,
         use_dataframe_format: bool = False,
         filter_by_model: bool = False,
         filter_model_id: Optional[str] = None,
