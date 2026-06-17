@@ -17,7 +17,7 @@ _COMMON = dict(
     objective="multi:softprob",
     use_label_encoder=False,
     random_state=42,
-    tree_method="hist",
+    tree_method="exact",
     eval_metric="mlogloss",
     verbosity=0,
 )
