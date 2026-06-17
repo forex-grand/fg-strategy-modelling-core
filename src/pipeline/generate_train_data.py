@@ -781,6 +781,7 @@ def build_process_data(features):
 def filter_data_by_model(data_in:dict):
     predictions = FILTER_AUX_MODEL.predict(data_in)
     valid_mask  = np.array(predictions)==FILTER_LABEL_ID
+    print(valid_mask)
     valid_ds = {
       key:value[valid_mask]
       for key,value in data_in.items()

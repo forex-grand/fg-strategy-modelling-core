@@ -187,6 +187,8 @@ class AuxilaryModelManager:
             preprocessed, _ = transform(data, data, new_features_list=model_dict['feature_transformer'],n_jobs=cpu_counts)
 
           preds = model_dict['xgboost'].predict(preprocessed)
+          if preds.ndim==2:
+              preds = np.argmax(preds, axis=1)
           return preds.tolist()
       except Exception as e:
           raise ValueError(f"Value Error: {str(e)}")

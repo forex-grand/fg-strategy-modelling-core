@@ -20,7 +20,8 @@ def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}, force_reload=F
         print(f"Fitting transformer, will save to {transformer_path}")
         cpu_counts = os.cpu_count()
         ofe = OpenFE()
-        transformer = ofe.fit(data=X_train, label=y_train, n_jobs=cpu_counts, verbose=False)
+        verbose = int(os.getenv('OPENFE_VERBOSE',"500"))
+        transformer = ofe.fit(data=X_train, label=y_train, n_jobs=cpu_counts, verbose=verbose)
         joblib.dump(transformer, transformer_path)
 
     # Transform
