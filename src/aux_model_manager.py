@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import tempfile
+import threading
 from datetime import datetime, UTC
 from pathlib import Path
 import tensorflow as tf
@@ -22,6 +23,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 cpu_counts = os.cpu_count()
+_OPENFE_TRANSFORM_LOCK = threading.Lock()
 
 class AuxilaryModelManager:
   def __init__(self, model_id, output_path: str=None) -> None:
@@ -184,7 +186,8 @@ class AuxilaryModelManager:
           props = model_dict['metadata']
           if props['has_feature_transformer']:
             data = pd.DataFrame(data=preprocessed, columns=props['feature_keys'])
-            preprocessed, _ = transform(data, data, new_features_list=model_dict['feature_transformer'],n_jobs=cpu_counts)
+            with _OPENFE_TRANSFORM_LOCK:
+              preprocessed, _ = transform(data, data, new_features_list=model_dict['feature_transformer'],n_jobs=cpu_counts)
 
           preds = model_dict['xgboost'].predict(preprocessed)
           if preds.ndim==2:
@@ -210,4 +213,3 @@ class AuxilaryModelManager:
       
       return preds
 
-  
