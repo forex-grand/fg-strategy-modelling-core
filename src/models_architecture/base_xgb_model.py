@@ -16,8 +16,8 @@ import pandas as pd
 _COMMON = dict(
     objective="multi:softprob",
     use_label_encoder=False,
-    random_state=42,
-    tree_method="exact",
+    random_state=44,
+    tree_method="hist",
     eval_metric="mlogloss",
     verbosity=0,
 )
