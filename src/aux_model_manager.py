@@ -16,7 +16,7 @@ import joblib
 import re
 from typing import Any
 from botocore.exceptions import ClientError
-from openfe import transform
+from src.pipeline.feature_selection import transform_fe
 import pandas as pd
 import numpy as np
 import logging
@@ -187,7 +187,7 @@ class AuxilaryModelManager:
           if props['has_feature_transformer']:
             data = pd.DataFrame(data=preprocessed, columns=props['feature_keys'])
             with _OPENFE_TRANSFORM_LOCK:
-              preprocessed, _ = transform(data, data, new_features_list=model_dict['feature_transformer'],n_jobs=cpu_counts)
+              preprocessed = transform_fe(data, model_dict['feature_transformer'])
 
           preds = model_dict['xgboost'].predict(preprocessed)
           if preds.ndim==2:
