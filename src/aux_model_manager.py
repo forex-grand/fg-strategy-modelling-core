@@ -9,6 +9,8 @@ import tensorflow as tf
 import keras
 import uuid
 import zipfile
+from openfe import OpenFE, transform
+
 from src.settings import Settings
 from src.storage.utils import getStorageClient
 from xgboost import XGBClassifier
@@ -16,14 +18,52 @@ import joblib
 import re
 from typing import Any
 from botocore.exceptions import ClientError
-from src.pipeline.feature_selection import transform_fe
 import pandas as pd
 import numpy as np
 import logging
+import warnings
 
 logger = logging.getLogger(__name__)
 cpu_counts = os.cpu_count()
 _OPENFE_TRANSFORM_LOCK = threading.Lock()
+
+
+
+def _is_transformer_bundle(feature_transformer):
+    return isinstance(feature_transformer, dict) and "features" in feature_transformer
+
+def _get_openfe_features(feature_transformer):
+    if _is_transformer_bundle(feature_transformer):
+        return feature_transformer["features"]
+    return feature_transformer
+
+def _get_openfe_imputer(feature_transformer):
+    if _is_transformer_bundle(feature_transformer):
+        return feature_transformer.get("imputer")
+    return None
+
+def _openfe_transform(X_train, X_eval, feature_transformer, n_jobs):
+    features = _get_openfe_features(feature_transformer)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="overflow encountered in exp",
+            category=RuntimeWarning,
+        )
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            return transform(X_train, X_eval, features, n_jobs=n_jobs)
+
+def _sanitize_openfe_frame(frame):
+    return frame.replace([np.inf, -np.inf], np.nan)
+
+def transform_fe(X, feature_transformer):
+  cpu_counts = os.cpu_count()
+  X_transformed, _ = _openfe_transform(X, X, feature_transformer, n_jobs=cpu_counts)
+  X_transformed = _sanitize_openfe_frame(X_transformed)
+  imputer = _get_openfe_imputer(feature_transformer)
+  if imputer is not None:
+    X_transformed = pd.DataFrame(imputer.transform(X_transformed), columns=X_transformed.columns)
+  return X_transformed
 
 class AuxilaryModelManager:
   def __init__(self, model_id, output_path: str=None) -> None:
