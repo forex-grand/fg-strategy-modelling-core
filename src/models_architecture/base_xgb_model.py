@@ -20,6 +20,7 @@ _COMMON = dict(
     tree_method="hist",
     eval_metric="mlogloss",
     verbosity=0,
+    n_jobs=-1,
 )
 
 cpu_counts = os.cpu_count()
