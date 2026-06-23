@@ -916,6 +916,9 @@ def process_save_data_tf(args):
     features_data = _build_sequence_data(df, symbol_properties)
     data_features = build_process_data(features_data)
     data_keys = list(data_features.keys())
+    if len(data_keys) == 0:
+        print("No features to save.")
+        return
     data_length = len(data_features[data_keys[0]])
     _write_shard_worker((output_file, data_features, SEQUENCE_LENGTH, data_length))
 
