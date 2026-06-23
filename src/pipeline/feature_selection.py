@@ -1,10 +1,35 @@
 from openfe import OpenFE, transform
 from sklearn.impute import SimpleImputer
+from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 import os
+import sys
 import joblib
 import numpy as np
 import pandas as pd
 import warnings
+
+
+@contextmanager
+def _suppress_native_output():
+    """Silence C/C++ extension output, including logs emitted by child processes."""
+    stdout_fd = 1
+    stderr_fd = 2
+    saved_stdout_fd = os.dup(stdout_fd)
+    saved_stderr_fd = os.dup(stderr_fd)
+
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        with open(os.devnull, "w") as devnull:
+            os.dup2(devnull.fileno(), stdout_fd)
+            os.dup2(devnull.fileno(), stderr_fd)
+            with redirect_stdout(devnull), redirect_stderr(devnull):
+                yield
+    finally:
+        os.dup2(saved_stdout_fd, stdout_fd)
+        os.dup2(saved_stderr_fd, stderr_fd)
+        os.close(saved_stdout_fd)
+        os.close(saved_stderr_fd)
 
 
 def _env_flag(name, default=False):
@@ -77,13 +102,15 @@ def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}, force_reload=F
         cpu_counts = os.cpu_count()
         ofe = OpenFE()
         verbose = _env_flag("OPENFE_VERBOSE", default=False)
-        transformer = ofe.fit(
-            data=X_train,
-            label=y_train,
-            n_jobs=cpu_counts,
-            verbose=verbose,
-            stage2_params=_openfe_stage2_params(cpu_counts),
-        )
+        output_context = nullcontext() if verbose else _suppress_native_output()
+        with output_context:
+            transformer = ofe.fit(
+                data=X_train,
+                label=y_train,
+                n_jobs=cpu_counts,
+                verbose=verbose,
+                stage2_params=_openfe_stage2_params(cpu_counts),
+            )
 
     # Transform
     cpu_counts = os.cpu_count()
