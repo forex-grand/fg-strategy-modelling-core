@@ -42,6 +42,7 @@ PREPROCESS_DATA = False
 FILTER_BY_MODEL = False
 FILTER_LABEL_ID = 0
 FILTER_AUX_MODEL = None
+DEBUG_MODE = bool(os.getenv("DEBUG_MODE", "0"))
 
 class GenerateTrainData:
     """Generate versioned TensorFlow training and evaluation TFRecords."""
@@ -780,7 +781,9 @@ def build_process_data(features):
 
 def filter_data_by_model(data_in:dict):
     predictions = FILTER_AUX_MODEL.predict(data_in)
-    print(np.unique_counts(predictions))
+    
+    if DEBUG_MODE:
+        print(np.unique_counts(predictions))
     valid_mask  = np.array(predictions)==FILTER_LABEL_ID
     
     valid_ds = {
@@ -918,7 +921,8 @@ def process_save_data_tf(args):
     data_features = build_process_data(features_data)
     data_keys = list(data_features.keys())
     if len(data_keys) == 0:
-        print("No features to save.")
+        if DEBUG_MODE:
+           print("No features to save.")
         return
     data_length = len(data_features[data_keys[0]])
     _write_shard_worker((output_file, data_features, SEQUENCE_LENGTH, data_length))
