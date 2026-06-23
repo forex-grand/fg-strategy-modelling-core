@@ -16,7 +16,7 @@ from imblearn.under_sampling import RandomUnderSampler
 from sklearn.utils.class_weight import compute_sample_weight
 
 from src.models_architecture.base_model import BaseModel
-from src.pipeline.feature_selection import auto_expand_feature_fe
+from src.pipeline.feature_selection import auto_expand_feature_fe, transform_fe
 from src.schemas import ModelBuildTrainArguments
 
 tf.get_logger().setLevel("ERROR")
@@ -33,6 +33,7 @@ class TrainModel(BaseModel):
         self.strategy = tf.distribute.MirroredStrategy()
         self.nn_model: keras.Model | None = None
         self.openfe_nn_model: keras.Model | None = None
+        self.num_classes: int = 0
 
     @abstractmethod
     def build_model(self, input_spec: dict, num_classes: int) -> tf.keras.Model:
@@ -56,6 +57,70 @@ class TrainModel(BaseModel):
             metrics.append(keras.metrics.Recall(name="recall_hold", class_id=2))
 
         return metrics
+
+    def evaluate(self, eval_ds: tf.data.Dataset) -> dict[str, float]:
+        if self.num_classes <= 0:
+            raise ValueError("Model must be trained before evaluation; num_classes is not set.")
+
+        precision_buy = keras.metrics.Precision(class_id=0)
+        precision_sell = keras.metrics.Precision(class_id=1)
+        recall_buy = keras.metrics.Recall(class_id=0)
+        recall_sell = keras.metrics.Recall(class_id=1)
+        accuracy = keras.metrics.CategoricalAccuracy()
+
+        cardinality = eval_ds.cardinality()
+        steps_per_epoch = int(os.getenv("STEPS_PER_EPOCH", "-1"))
+        num_batches = steps_per_epoch if steps_per_epoch > 0 else (cardinality if cardinality > 0 else 100)
+        num_eval_batches = cardinality if cardinality > 0 else num_batches
+        if cardinality == -2:
+            num_eval_batches = -1
+
+        use_openfe = self._feature_generator() == "OPENFE"
+        predict_model = self.openfe_nn_model if use_openfe and self.openfe_nn_model is not None else self.nn_model
+        if predict_model is None:
+            raise ValueError("No trained neural network model is available for evaluation.")
+
+        for batch_x, batch_y in eval_ds.take(num_eval_batches):
+            if use_openfe:
+                X = np.stack([tf.squeeze(value).numpy() for value in batch_x.values()], axis=-1)
+                X = pd.DataFrame(X, columns=list(batch_x.keys()))
+                X = transform_fe(X, self.feature_transformer)
+                X_input = {
+                    name: X[name].to_numpy(dtype=np.float32).reshape((-1, 1))
+                    for name in X.columns
+                }
+                predictions = predict_model.predict(X_input, verbose=0)
+            else:
+                predictions = predict_model.predict(batch_x, verbose=0)
+
+            y_true = self._labels_to_class_ids(batch_y)
+            y_pred = np.asarray(predictions)
+            if y_pred.ndim > 1 and y_pred.shape[-1] > 1:
+                y_pred = np.argmax(y_pred, axis=-1)
+            else:
+                y_pred = np.reshape(y_pred, (-1,))
+
+            y_true_onehot = tf.one_hot(y_true, depth=self.num_classes)
+            y_pred_onehot = tf.one_hot(y_pred.astype(np.int32), depth=self.num_classes)
+
+            precision_buy.update_state(y_true_onehot, y_pred_onehot)
+            precision_sell.update_state(y_true_onehot, y_pred_onehot)
+            recall_buy.update_state(y_true_onehot, y_pred_onehot)
+            recall_sell.update_state(y_true_onehot, y_pred_onehot)
+            accuracy.update_state(y_true_onehot, y_pred_onehot)
+
+        val_loss = float(self.history.history["val_loss"][-1]) if self.history and "val_loss" in self.history.history else 0.0
+        train_loss = float(self.history.history["loss"][-1]) if self.history and "loss" in self.history.history else 0.0
+
+        return {
+            "accuracy": float(accuracy.result().numpy()),
+            "precision_buy": float(precision_buy.result().numpy()),
+            "precision_sell": float(precision_sell.result().numpy()),
+            "recall_buy": float(recall_buy.result().numpy()),
+            "recall_sell": float(recall_sell.result().numpy()),
+            "val_loss": val_loss,
+            "train_loss": train_loss,
+        }
 
     @staticmethod
     def _feature_generator() -> str:
@@ -290,6 +355,7 @@ class TrainModel(BaseModel):
         )
         input_spec = self._frame_input_spec(X_train) if use_openfe else train_ds.element_spec[0]
 
+        self.num_classes = num_classes
         with self.strategy.scope():
             model = self.build_model(input_spec=input_spec, num_classes=num_classes)
             model.compile(
