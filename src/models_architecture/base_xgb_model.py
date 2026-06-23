@@ -89,11 +89,11 @@ class XGBTrainModel(BaseModel):
             accuracy.update_state(y_true, y_pred)
 
         metrics = {
-            'accuracy':accuracy.result(),
-            'precision_buy':precision_buy.result(),
-            'precision_sell':precision_sell.result(),
-            'recall_buy':recall_buy.result(),
-            'recall_sell':recall_sell.result(),
+            'accuracy':accuracy.result().numpy(),
+            'precision_buy':precision_buy.result().numpy(),
+            'precision_sell':precision_sell.result().numpy(),
+            'recall_buy':recall_buy.result().numpy(),
+            'recall_sell':recall_sell.result().numpy(),
             'val_loss':self.eval_loss,
             'train_loss':self.train_loss,
         }
