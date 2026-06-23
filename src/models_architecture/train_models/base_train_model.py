@@ -35,7 +35,7 @@ class TrainModel(BaseModel):
         self.openfe_nn_model: keras.Model | None = None
 
     @abstractmethod
-    def build_model(self, input_spec: dict) -> tf.keras.Model:
+    def build_model(self, input_spec: dict, num_classes: int) -> tf.keras.Model:
         """Should be implemented by individual subclasses"""
 
     def _get_metrics(self, num_classes: int | None = None) -> list[keras.metrics.Metric]:
@@ -291,7 +291,7 @@ class TrainModel(BaseModel):
         input_spec = self._frame_input_spec(X_train) if use_openfe else train_ds.element_spec[0]
 
         with self.strategy.scope():
-            model = self.build_model(input_spec=input_spec)
+            model = self.build_model(input_spec=input_spec, num_classes=num_classes)
             model.compile(
                 optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
                 loss=keras.losses.CategoricalCrossentropy(),
