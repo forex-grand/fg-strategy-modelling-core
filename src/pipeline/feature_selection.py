@@ -7,6 +7,25 @@ import pandas as pd
 import warnings
 
 
+def _env_flag(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _openfe_stage2_params(n_jobs):
+    return {
+        "n_estimators": 1000,
+        "importance_type": "gain",
+        "num_leaves": 16,
+        "seed": 1,
+        "n_jobs": n_jobs,
+        "verbosity": -1,
+        "force_col_wise": True,
+    }
+
+
 def _is_transformer_bundle(feature_transformer):
     return isinstance(feature_transformer, dict) and "features" in feature_transformer
 
@@ -57,8 +76,14 @@ def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}, force_reload=F
         print(f"Fitting transformer, will save to {transformer_path}")
         cpu_counts = os.cpu_count()
         ofe = OpenFE()
-        verbose = int(os.getenv('OPENFE_VERBOSE',"500"))
-        transformer = ofe.fit(data=X_train, label=y_train, n_jobs=cpu_counts, verbose=verbose)
+        verbose = _env_flag("OPENFE_VERBOSE", default=False)
+        transformer = ofe.fit(
+            data=X_train,
+            label=y_train,
+            n_jobs=cpu_counts,
+            verbose=verbose,
+            stage2_params=_openfe_stage2_params(cpu_counts),
+        )
 
     # Transform
     cpu_counts = os.cpu_count()
