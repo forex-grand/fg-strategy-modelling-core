@@ -143,7 +143,6 @@ class Trainer:
                 )
             statistics = get_target_statistics(target_data, percentiles=[self.target_percentile])
             mean_target_min_value = int((statistics['quantiles']['target_highest'][self.target_percentile] + statistics['quantiles']['target_lowest'][self.target_percentile])/2)
-            LOGGER.info(f"Min Target Point: {mean_target_min_value}")
             preprocessor.min_target_points = mean_target_min_value
             self.data_gen.preprocess_layer = preprocessor
             train_path, eval_path = self.data_gen.load_data(
@@ -202,7 +201,7 @@ class Trainer:
         LOGGER.info("=" * 80)
         for rank, r in enumerate(passed_sorted, start=1):
             LOGGER.info(
-                "[#%02d] %s:%s | prec_buy=%.4f  prec_sell=%.4f  rec_buy=%.4f  rec_sell=%.4f",
+                "[#%02d] %s:%s | prec_buy=%.4f  prec_sell=%.4f  rec_buy=%.4f  rec_sell=%.4f model_id=%s",
                 rank,
                 r.symbol,
                 r.model_type,
@@ -210,6 +209,7 @@ class Trainer:
                 r.metrics.get("precision_sell", 0.0),
                 r.metrics.get("recall_buy",     0.0),
                 r.metrics.get("recall_sell",    0.0),
+                r.model_id if r.model_id else "N/A",
             )
 
         LOGGER.info("-" * 80)
@@ -217,13 +217,14 @@ class Trainer:
         LOGGER.info("-" * 80)
         for r in failed:
             LOGGER.info(
-                "[FAIL] %s:%s | prec_buy=%.4f  prec_sell=%.4f  rec_buy=%.4f  rec_sell=%.4f",
+                "[FAIL] %s:%s | prec_buy=%.4f  prec_sell=%.4f  rec_buy=%.4f  rec_sell=%.4f model_id=%s",
                 r.symbol,
                 r.model_type,
                 r.metrics.get("precision_buy",  0.0),
                 r.metrics.get("precision_sell", 0.0),
                 r.metrics.get("recall_buy",     0.0),
                 r.metrics.get("recall_sell",    0.0),
+                r.model_id if r.model_id else "N/A",
             )
         LOGGER.info("=" * 80)
                 
