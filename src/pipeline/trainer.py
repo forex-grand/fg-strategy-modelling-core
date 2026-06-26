@@ -310,17 +310,8 @@ class Trainer:
                 raw_model = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
                 model_obj = model.model
 
-                eval_values = raw_model.evaluate(eval_ds, return_dict=True, verbose=0)
-                LOGGER.info(f"Evaluation results for {symbol} {model_type}: {eval_values}")
-                metric_values = {
-                    "accuracy": float(eval_values.get("accuracy", 0.0)),
-                    "precision_buy": float(eval_values.get("precision_buy", 0.0)),
-                    "precision_sell": float(eval_values.get("precision_sell", 0.0)),
-                    "recall_buy": float(eval_values.get("recall_buy", 0.0)),
-                    "recall_sell": float(eval_values.get("recall_sell", 0.0)),
-                    "val_loss": float(eval_values.get("loss", 0.0)),
-                    "train_loss": float(model.history.history["loss"][-1]),
-                }
+                metric_values = model.evaluate(eval_ds)
+                LOGGER.info(f"Evaluation results for {symbol} {model_type}: {metric_values}")
 
                 evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
                 if not evaluator_passed:

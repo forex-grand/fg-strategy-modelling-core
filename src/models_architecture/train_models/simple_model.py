@@ -9,11 +9,11 @@ class SimpleNSTrainModel(TrainModel):
     def __init__(self, preprocessor, sequence_length):
         super().__init__(preprocessor, sequence_length)
  
-    def build_model(self, input_spec:dict[str,tf.TensorSpec]):
+    def build_model(self, input_spec:dict[str,tf.TensorSpec], num_classes:int):
         inputs = {key:keras.Input(shape=(spec.shape[-1] if spec.shape.rank>1 else 1,), name=key, dtype=spec.dtype)
                   for key,spec in input_spec.items()}
         x = keras.layers.concatenate(list(inputs.values()))
         x = keras.layers.Dense(32)(x)
         x = keras.layers.Dense(32)(x)
-        output = keras.layers.Dense(3, activation="softmax")(x)
+        output = keras.layers.Dense(num_classes, activation="softmax")(x)
         return keras.Model(inputs, output)

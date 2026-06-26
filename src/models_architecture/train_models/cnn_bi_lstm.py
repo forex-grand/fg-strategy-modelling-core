@@ -9,7 +9,7 @@ class CNNBiLSTMModel(TrainModel):
     def __init__(self, preprocessor, sequence_length):
         super().__init__(preprocessor, sequence_length)
         
-    def build_model(self, input_spec:dict[str,tf.TensorSpec]):
+    def build_model(self, input_spec:dict[str,tf.TensorSpec], num_classes:int):
         ##verify all features have same length
         spec1_length = None
         features_length = 0
@@ -38,5 +38,5 @@ class CNNBiLSTMModel(TrainModel):
         x = keras.layers.Bidirectional(keras.layers.LSTM(32, return_sequences=False))(x)
         x = keras.layers.Dense(64, activation="relu")(x)
         x = keras.layers.Dropout(0.3)(x)
-        output = keras.layers.Dense(3, activation="softmax")(x)
+        output = keras.layers.Dense(num_classes, activation="softmax")(x)
         return keras.Model(inputs, output)
