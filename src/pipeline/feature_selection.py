@@ -10,6 +10,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import warnings
+from collections.abc import Mapping, KeysView, ValuesView, ItemsView
 
 
 @contextmanager
@@ -90,36 +91,38 @@ def _make_transformer_bundle(features, imputer):
     return {"features": features, "imputer": imputer}
 
 
-from collections.abc import Mapping, Sequence
-
-def _normalize_metadata_value(value):
+def _metadata_to_json_safe(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "model_dump"):
+        return _metadata_to_json_safe(value.model_dump())
     if isinstance(value, Mapping):
-        return json.loads(_normalize_metadata(value))
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (bytes, bytearray)):
-        return value.decode("utf-8", errors="replace")
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_normalize_metadata_value(item) for item in value]
-    if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, bytearray)):
-        try:
-            return [_normalize_metadata_value(item) for item in value]
-        except TypeError:
-            pass
-    if isinstance(value, (int, float, bool)):
-        return value
+        return {
+            str(key): _metadata_to_json_safe(value[key])
+            for key in sorted(value, key=lambda item: str(item))
+        }
+    if isinstance(value, (list, tuple, set, KeysView, ValuesView)):
+        return [_metadata_to_json_safe(item) for item in value]
+    if isinstance(value, ItemsView):
+        return [
+            [_metadata_to_json_safe(key), _metadata_to_json_safe(item_value)]
+            for key, item_value in value
+        ]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return _metadata_to_json_safe(value.tolist())
     return str(value)
 
 
 def _normalize_metadata(metadata):
     if metadata is None:
         return ""
-    if isinstance(metadata, Mapping):
-        normalized = {}
-        for key in sorted(metadata):
-            normalized[key] = _normalize_metadata_value(metadata[key])
-        return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
-    return str(metadata)
+    return json.dumps(
+        _metadata_to_json_safe(metadata),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _metadata_hash(metadata):
@@ -133,7 +136,8 @@ def _openfe_save_dir(metadata):
     return os.path.join("data", "openfe", _metadata_hash(metadata))
 
 
-def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}, force_reload=False):
+def auto_expand_feature_fe(X_train, y_train, X_eval, metadata=None, force_reload=False):
+    metadata_payload = _metadata_to_json_safe(metadata or {})
     save_dir = _openfe_save_dir(metadata)
     os.makedirs(save_dir, exist_ok=True)
     transformer_path = os.path.join(save_dir, "transformer.pkl")
@@ -157,7 +161,7 @@ def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}, force_reload=F
                 stage2_params=_openfe_stage2_params(cpu_counts),
             )
         with open(metadata_path, "w", encoding="utf-8") as meta_file:
-            json.dump(metadata or {}, meta_file, sort_keys=True, indent=2)
+            json.dump(metadata_payload, meta_file, sort_keys=True, indent=2)
 
     # Transform
     cpu_counts = os.cpu_count()
