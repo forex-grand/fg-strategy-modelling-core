@@ -792,6 +792,37 @@ def filter_data_by_model(data_in:dict):
     }
     return valid_ds
 
+def _normalize_feature_lengths(
+    feature_data: dict[str, np.ndarray | tf.Tensor],
+    output_file: str | Path,
+) -> tuple[dict[str, np.ndarray | tf.Tensor], int]:
+    lengths = {
+        key: int(value.shape[0])
+        for key, value in feature_data.items()
+        if len(value.shape) > 0
+    }
+    if not lengths:
+        return feature_data, 0
+
+    num_examples = min(lengths.values())
+    if num_examples <= 0:
+        if DEBUG_MODE:
+            print(f"No examples to save for {output_file}. Feature lengths: {lengths}")
+        return {}, 0
+
+    if len(set(lengths.values())) > 1 and DEBUG_MODE:
+        print(
+            f"Feature length mismatch for {output_file}; clipping to {num_examples}. "
+            f"Feature lengths: {lengths}",
+            flush=True,
+        )
+
+    normalized = {
+        key: value[:num_examples]
+        for key, value in feature_data.items()
+    }
+    return normalized, num_examples
+
 @tf.function
 def _preprocess_batch_data(data):
     result = PREPROCESS_INSTANCE(data, training=True)
@@ -919,12 +950,11 @@ def process_save_data_tf(args):
     (output_file, df, symbol_properties) = args
     features_data = _build_sequence_data(df, symbol_properties)
     data_features = build_process_data(features_data)
-    data_keys = list(data_features.keys())
-    if len(data_keys) == 0:
+    data_features, data_length = _normalize_feature_lengths(data_features, output_file)
+    if data_length == 0:
         if DEBUG_MODE:
            print("No features to save.")
         return
-    data_length = len(data_features[data_keys[0]])
     _write_shard_worker((output_file, data_features, SEQUENCE_LENGTH, data_length))
 
 def _partition_into_shards(total: int, num_shards: int) -> list[range]:
@@ -958,6 +988,9 @@ def _write_shard_worker(args: tuple) -> None:
     ) = args
 
     # import tensorflow as tf  # re-import in worker process
+    feature_data, num_examples = _normalize_feature_lengths(feature_data, output_path)
+    if num_examples == 0:
+        return
 
     options = tf.io.TFRecordOptions(compression_type="GZIP", compression_level=1)
 
