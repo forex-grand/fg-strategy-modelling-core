@@ -42,7 +42,7 @@ PREPROCESS_DATA = False
 FILTER_BY_MODEL = False
 FILTER_LABEL_ID = 0
 FILTER_AUX_MODEL = None
-DEBUG_MODE = bool(os.getenv("DEBUG_MODE", "0"))
+DEBUG_MODE = bool(int(os.getenv("DEBUG_MODE", "0")))
 
 class GenerateTrainData:
     """Generate versioned TensorFlow training and evaluation TFRecords."""
@@ -784,6 +784,7 @@ def filter_data_by_model(data_in:dict):
     
     if DEBUG_MODE:
         print(np.unique_counts(predictions))
+        
     valid_mask  = np.array(predictions)==FILTER_LABEL_ID
     
     valid_ds = {
