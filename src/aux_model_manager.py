@@ -9,12 +9,22 @@ import tensorflow as tf
 import keras
 import uuid
 import zipfile
-from openfe import OpenFE, transform
+try:
+    from openfe import OpenFE, transform
+except ModuleNotFoundError:
+    OpenFE = None
+    transform = None
 
 from src.settings import Settings
 from src.storage.utils import getStorageClient
-from xgboost import XGBClassifier
-import joblib
+try:
+    from xgboost import XGBClassifier
+except ModuleNotFoundError:
+    XGBClassifier = None
+try:
+    import joblib
+except ModuleNotFoundError:
+    joblib = None
 import re
 from typing import Any
 from botocore.exceptions import ClientError
@@ -43,6 +53,8 @@ def _get_openfe_imputer(feature_transformer):
     return None
 
 def _openfe_transform(X_train, X_eval, feature_transformer, n_jobs):
+    if transform is None:
+        raise ModuleNotFoundError("openfe is required to transform OpenFE features.")
     features = _get_openfe_features(feature_transformer)
     with warnings.catch_warnings():
         warnings.filterwarnings(
@@ -138,6 +150,8 @@ class AuxilaryModelManager:
       model_type = properties.get("model_type", "unknown")
 
       if "xgb" in model_type.lower():
+          if XGBClassifier is None:
+              raise ModuleNotFoundError("xgboost is required to load auxiliary XGBoost models.")
           xgb_path = tmp_path / "xgboost.json"
           xgb_key = self._xgb_key(model_id)
           if not self._local_files_exist(xgb_path):
@@ -153,6 +167,8 @@ class AuxilaryModelManager:
           
           has_feature_transformer = properties.get('has_feature_transformer', False)
           if has_feature_transformer:
+            if joblib is None:
+              raise ModuleNotFoundError("joblib is required to load OpenFE transformer bundles.")
             if not ftransform_exist:
               if self.object_exists(bucket, ftransform_key):
                   self.download_file(bucket, ftransform_key, str(ftransform_path))
