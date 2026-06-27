@@ -90,19 +90,34 @@ def _make_transformer_bundle(features, imputer):
     return {"features": features, "imputer": imputer}
 
 
+from collections.abc import Mapping, Sequence
+
+def _normalize_metadata_value(value):
+    if isinstance(value, Mapping):
+        return json.loads(_normalize_metadata(value))
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_normalize_metadata_value(item) for item in value]
+    if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, bytearray)):
+        try:
+            return [_normalize_metadata_value(item) for item in value]
+        except TypeError:
+            pass
+    if isinstance(value, (int, float, bool)):
+        return value
+    return str(value)
+
+
 def _normalize_metadata(metadata):
     if metadata is None:
         return ""
-    if isinstance(metadata, dict):
+    if isinstance(metadata, Mapping):
         normalized = {}
         for key in sorted(metadata):
-            value = metadata[key]
-            if isinstance(value, (list, tuple, set)):
-                normalized[key] = [str(v) for v in value]
-            elif isinstance(value, dict):
-                normalized[key] = json.loads(_normalize_metadata(value))
-            else:
-                normalized[key] = str(value)
+            normalized[key] = _normalize_metadata_value(metadata[key])
         return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
     return str(metadata)
 
