@@ -1,7 +1,10 @@
 from openfe import OpenFE, transform
 from sklearn.impute import SimpleImputer
 from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
+import hashlib
+import json
 import os
+import re
 import sys
 import joblib
 import numpy as np
@@ -86,14 +89,41 @@ def _sanitize_openfe_frame(frame):
 def _make_transformer_bundle(features, imputer):
     return {"features": features, "imputer": imputer}
 
+
+def _normalize_metadata(metadata):
+    if metadata is None:
+        return ""
+    if isinstance(metadata, dict):
+        normalized = {}
+        for key in sorted(metadata):
+            value = metadata[key]
+            if isinstance(value, (list, tuple, set)):
+                normalized[key] = [str(v) for v in value]
+            elif isinstance(value, dict):
+                normalized[key] = json.loads(_normalize_metadata(value))
+            else:
+                normalized[key] = str(value)
+        return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+    return str(metadata)
+
+
+def _metadata_hash(metadata):
+    normalized = _normalize_metadata(metadata)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _openfe_save_dir(metadata):
+    if not metadata:
+        return os.path.join("data", "openfe_default")
+    return os.path.join("data", "openfe", _metadata_hash(metadata))
+
+
 def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}, force_reload=False):
-    # Build save path from metadata
-    meta_str = "_".join(f"{k}-{v}" for k, v in sorted(metadata.items()))
-    save_dir = os.path.join("data", meta_str if meta_str else "default")
+    save_dir = _openfe_save_dir(metadata)
     os.makedirs(save_dir, exist_ok=True)
     transformer_path = os.path.join(save_dir, "transformer.pkl")
+    metadata_path = os.path.join(save_dir, "metadata.json")
 
-    
     if os.path.exists(transformer_path) and not force_reload:
         print(f"Loading transformer from {transformer_path}")
         transformer = joblib.load(transformer_path)
@@ -111,6 +141,8 @@ def auto_expand_feature_fe(X_train, y_train, X_eval, metadata={}, force_reload=F
                 verbose=verbose,
                 stage2_params=_openfe_stage2_params(cpu_counts),
             )
+        with open(metadata_path, "w", encoding="utf-8") as meta_file:
+            json.dump(metadata or {}, meta_file, sort_keys=True, indent=2)
 
     # Transform
     cpu_counts = os.cpu_count()
