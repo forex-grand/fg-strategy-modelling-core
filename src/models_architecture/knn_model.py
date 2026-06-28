@@ -149,14 +149,14 @@ class KNNModel(BaseModel):
 
     def get_serving_signature(self):
         input_signature = {
-            "time": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.int64, name="time"),
-            "open": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="open"),
-            "high": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="high"),
-            "close": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="close"),
-            "low": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="low"),
-            "spread": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="spread"),
-            "real_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="real_volume"),
-            "tick_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="tick_volume"),
+            "time": tf.TensorSpec(shape=[None, None], dtype=tf.int64, name="time"),
+            "open": tf.TensorSpec(shape=[None, None], dtype=tf.float32, name="open"),
+            "high": tf.TensorSpec(shape=[None, None], dtype=tf.float32, name="high"),
+            "close": tf.TensorSpec(shape=[None, None], dtype=tf.float32, name="close"),
+            "low": tf.TensorSpec(shape=[None, None], dtype=tf.float32, name="low"),
+            "spread": tf.TensorSpec(shape=[None, None], dtype=tf.float32, name="spread"),
+            "real_volume": tf.TensorSpec(shape=[None, None], dtype=tf.float32, name="real_volume"),
+            "tick_volume": tf.TensorSpec(shape=[None, None], dtype=tf.float32, name="tick_volume"),
         }
 
         @tf.function(input_signature=[input_signature])
