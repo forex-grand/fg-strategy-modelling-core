@@ -161,6 +161,6 @@ class KNNModel(BaseModel):
 
         @tf.function(input_signature=[input_signature])
         def serve(examples):
-            return self.model(examples)
+            return {"output":self.model(examples)}
 
         return serve
