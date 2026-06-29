@@ -14,7 +14,10 @@ import zipfile
 from src.settings import Settings
 from src.models_architecture.base_model import BaseModel
 from src.storage.utils import getStorageClient
-import joblib
+try:
+    import joblib
+except ModuleNotFoundError:
+    joblib = None
 import re
 
 LOGGER = logging.getLogger(__name__)
@@ -97,6 +100,8 @@ class ModelPusher:
                   )
 
             if model.feature_transformer is not None:
+              if joblib is None:
+                raise ModuleNotFoundError("joblib is required to upload feature transformer bundles.")
               local_transformer_path = local_root / "transformer.pkl"
               joblib.dump(model.feature_transformer, local_transformer_path)
               xgboost_object_key = f"prediction-models/{unique_identifier}/transformer.pkl"

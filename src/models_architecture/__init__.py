@@ -16,9 +16,11 @@ Modules:
 """
 
 from src.models_architecture.base_model import BaseModel
+from src.models_architecture.knn_model import KNNModel
 from src.models_architecture.no_train_model import NoTrainModel
 
 __all__ = [
     "BaseModel",
+    "KNNModel",
     "NoTrainModel",
 ]

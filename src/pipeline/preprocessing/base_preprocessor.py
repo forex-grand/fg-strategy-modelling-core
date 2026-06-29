@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import abc
-import tempfile
 from pathlib import Path
 from typing import Any
 import keras
@@ -24,6 +23,7 @@ class PreprocessBase(keras.layers.Layer, metaclass=abc.ABCMeta):
         super().__init__(**kwargs)
         self.sequence_length = int(sequence_length)
         self.min_target_points = min_target_points
+        self.auxmodel_dictionary: dict[str, Any] = {}
 
     def get_config(self):
         config = super().get_config()
@@ -40,6 +40,28 @@ class PreprocessBase(keras.layers.Layer, metaclass=abc.ABCMeta):
     @keras.utils.register_keras_serializable(name="Preproces_function")
     def get_transform_layer(self,):
         return self
+
+    def attach_intermediary_model(
+        self,
+        model_id: str,
+        name: str | None = None,
+        output_path: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Download and attach an auxiliary model for use inside preprocessors.
+
+        The loaded object is stored in ``self.auxmodel_dictionary`` and can be
+        accessed by subclasses during ``preprocess``.
+        """
+        if not model_id:
+            raise ValueError("model_id is required to attach an intermediary model.")
+
+        from src.aux_model_manager import AuxilaryModelManager
+
+        model_name = name or model_id
+        manager = AuxilaryModelManager(model_id=model_id, output_path=output_path)
+        self.auxmodel_dictionary[model_name] = manager.model
+        return manager.model
 
     @abc.abstractmethod
     @keras.utils.register_keras_serializable(name="Preproces_function")
