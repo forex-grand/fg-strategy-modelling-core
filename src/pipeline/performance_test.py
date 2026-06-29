@@ -89,17 +89,23 @@ def test_model_live_performance(
   
     valid_classes = tf.constant(valid_classes)
     for batch in batch_dataset:
-        predictions = model(batch)['output']
+        batch_data = tf.io.parse_example(batch, features={
+            'time': tf.io.FixedLenFeature([sequence_length], tf.int64),
+            'open': tf.io.FixedLenFeature([sequence_length], tf.float32),
+            'high': tf.io.FixedLenFeature([sequence_length], tf.float32),
+            'close': tf.io.FixedLenFeature([sequence_length], tf.float32),
+            'low': tf.io.FixedLenFeature([sequence_length], tf.float32),
+            'spread': tf.io.FixedLenFeature([sequence_length], tf.float32),
+            'real_volume': tf.io.FixedLenFeature([sequence_length], tf.float32),
+            'tick_volume': tf.io.FixedLenFeature([sequence_length], tf.float32),
+        })
+        predictions = model(batch_data)['output']
         if feature_transformer:
           X = pd.DataFrame(predictions, columns=feature_keys)
           predictions = transform_fe(X, feature_transformer)
         if is_xgb:
             predictions = xgboost_model.predict(predictions)
 
-        batch_data = tf.io.parse_example(batch, features={
-            'time': tf.io.FixedLenFeature([sequence_length], tf.int64),
-            'close': tf.io.FixedLenFeature([sequence_length], tf.float32)
-        })
         batch_times = batch_data['time'][:, -1]
         batch_prices = batch_data['close'][:, -1]
         pred_types = tf.where(predictions == 0, "BUY", tf.where(predictions == 1, "SELL", "HOLD"))

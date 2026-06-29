@@ -25,7 +25,6 @@ from src.pipeline.preprocessing.base_preprocessor import PreprocessBase
 from src.pipeline.statistics_gen import get_target_statistics
 from src.pipeline.pusher import ModelPusher
 from src.models_architecture.base_model import BaseModel
-from src.models_architecture.no_train_model import NoTrainModel
 from src.models_architecture.train_models.simple_model import SimpleNSTrainModel
 from src.models_architecture.train_models.xgb_train_models.xgb_tiny             import XGBTiny
 from src.models_architecture.train_models.xgb_train_models.xgb_simple_shallow   import XGBSimpleShallow
@@ -51,7 +50,6 @@ class Trainer:
     """Runs training for every (symbol, model_type) combination."""
 
     MODEL_REGISTRY = {
-        "no-train": NoTrainModel,
         "simple-ns": SimpleNSTrainModel,
         "conservative-ns": ConservativeNSTrainModel,
         "complex-ns": ComplexNSTrainModel,
@@ -241,28 +239,7 @@ class Trainer:
         model_obj = None
         metric_values = {}
         _reason_map = {}
-        if model_type=="no-train":
-            fn_args = ModelBuildTrainArguments(
-            learning_rate=self.config.learning_rate,
-            epochs=self.config.epochs,
-            callbacks=[],
-            steps_per_epoch=self.config.steps_per_epoch,
-            )
-            model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
-            metric_values = model.evaluate(eval_ds)
-            evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
-            if not evaluator_passed:
-                LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
-                LOGGER.warning(f"Failure Reasons: {_reason_map}")
-                return TrainingResult(
-                    symbol=symbol,
-                    model_type=model_type,
-                    benchmark_passed=True,
-                    evaluator_passed=False,
-                    metrics=metric_values,
-                    model=model,
-                )
-        elif re.match(r"^xgb", model_type):
+        if re.match(r"^xgb", model_type):
             try:
                 one_d = train_ds.element_spec[0]
                 fn_args = {

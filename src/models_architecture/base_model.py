@@ -44,22 +44,24 @@ class BaseModel:
         export_path.mkdir(parents=True, exist_ok=True)
         return export_path
 
-    def get_serving_signature(self,):
-        @tf.function(
-            input_signature=[tf.TensorSpec(shape=[None], dtype=tf.string, name='examples')]
-        )
+    def get_serving_signature(self):
+        input_signature = {
+            "time": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.int64, name="time"),
+            "open": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="open"),
+            "high": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="high"),
+            "close": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="close"),
+            "low": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="low"),
+            "spread": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="spread"),
+            "real_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="real_volume"),
+            "tick_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="tick_volume"),
+        }
+
+        @tf.function(input_signature=[input_signature])
         def serve(examples):
-            parsed = tf.io.parse_example(examples, features={
-                'time':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.int64),
-                'open':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-                'high':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-                'close':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-                'low':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-                'spread':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-                'real_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-                'tick_volume':tf.io.FixedLenFeature(shape=[self.sequence_length], dtype=tf.float32),
-            })
-            return {'output': self.model(parsed)}
+            if isinstance(self.model.input, list):
+                ordered_inputs = [examples[name] for name in ["time", "open", "high", "close", "low", "spread", "real_volume", "tick_volume"]]
+                return {"output": self.model(ordered_inputs)}
+            return {"output": self.model(examples)}
 
         return serve
 

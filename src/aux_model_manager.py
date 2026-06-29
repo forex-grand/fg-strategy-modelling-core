@@ -191,61 +191,57 @@ class AuxilaryModelManager:
       logger.info("Loaded model '%s' from storage.", model_id)
       return model_dict
   
-  def _ohlc_to_feature_dict(self, row_dict) -> dict:
-      length = len(row_dict['time'])
-      sequence_length = self.model['metadata']['sequence_length']
-      time_  = row_dict['time'].numpy()[:,-sequence_length:]
-      open_  = row_dict['open'].numpy()[:,-sequence_length:]
-      high_  = row_dict['high'].numpy()[:,-sequence_length:]
-      close_ = row_dict['close'].numpy()[:,-sequence_length:]
-      low_   = row_dict['low'].numpy()[:,-sequence_length:]
-      spread_      = row_dict['spread'].numpy()[:,-sequence_length:]
-      tick_volume_ = row_dict['tick_volume'].numpy()[:,-sequence_length:]
-      real_volume_ = row_dict['real_volume'].numpy()[:,-sequence_length:]
-      
-      feature_dict = [tf.train.Example(features=tf.train.Features(feature={
-          "time": tf.train.Feature(int64_list=tf.train.Int64List(value=time_[i])),
-          "open": tf.train.Feature(float_list=tf.train.FloatList(value=open_[i])),
-          "high": tf.train.Feature(float_list=tf.train.FloatList(value=high_[i])),
-          "close": tf.train.Feature(float_list=tf.train.FloatList(value=close_[i])),
-          "low": tf.train.Feature(float_list=tf.train.FloatList(value=low_[i])),
-          "spread": tf.train.Feature(float_list=tf.train.FloatList(value=spread_[i])),
-          "tick_volume": tf.train.Feature(float_list=tf.train.FloatList(value=tick_volume_[i])),
-          "real_volume": tf.train.Feature(float_list=tf.train.FloatList(value=real_volume_[i])),
-      })).SerializeToString() for i in range(length)]
+  def _ohlc_to_feature_dict(self, row_dict) -> dict[str, tf.Tensor]:
+      sequence_length = int(self.model['metadata']['sequence_length'])
+      feature_dict = {}
+      for key in ("time", "open", "high", "close", "low", "spread", "tick_volume", "real_volume"):
+          value = row_dict[key]
+          if isinstance(value, tf.Tensor):
+              tensor = value
+          else:
+              tensor = tf.convert_to_tensor(value)
+
+          if tensor.shape.rank == 1:
+              tensor = tf.expand_dims(tensor, axis=0)
+
+          if tensor.shape.rank >= 2 and tensor.shape[-1] != sequence_length:
+              tensor = tensor[:, -sequence_length:]
+
+          feature_dict[key] = tensor
       return feature_dict
 
   def prepare_data(self, data):
       ts = datetime.now()
-      serialized = self._ohlc_to_feature_dict(data)
-      return serialized
+      prepared = self._ohlc_to_feature_dict(data)
+      return prepared
 
 
   # ---------------------------------------------------------------------------
   # Inference
   # ---------------------------------------------------------------------------
 
-  def run_nn_inference(self, model: tf.keras.Model, data: np.ndarray) -> list[list[float]]:
+  def run_nn_inference(self, model: tf.keras.Model, data: dict[str, tf.Tensor]) -> list[list[float]]:
       """
-      Run model.predict on *data* (shape (N, 8)).
+      Run saved-model inference on a feature dictionary.
       Returns a list of per-row prediction lists.
       """
-      preds: np.ndarray = model(data, verbose=0)
-      # Ensure 2-D: (N, output_units)
-      if preds.ndim == 1:
-          preds = preds.reshape(-1, 1)
-      return preds.tolist()
+      preds = model(data)['output']
+      preds_np = preds.numpy() if hasattr(preds, 'numpy') else np.asarray(preds)
+      if preds_np.ndim == 1:
+          preds_np = preds_np.reshape(-1, 1)
+      return preds_np.tolist()
 
-  def run_xgboost_inference(self, model_dict: dict, data: np.ndarray) -> list[float]:
+  def run_xgboost_inference(self, model_dict: dict, data: dict[str, tf.Tensor]) -> list[float]:
       try:
-          preprocessed = model_dict['model'](examples=data)['output'].numpy().tolist()
+          preprocessed = model_dict['model'](data)['output']
+          preprocessed_np = preprocessed.numpy() if hasattr(preprocessed, 'numpy') else np.asarray(preprocessed)
           props = model_dict['metadata']
           if props['has_feature_transformer']:
-            data = pd.DataFrame(data=preprocessed, columns=props['feature_keys'])
+            data = pd.DataFrame(data=preprocessed_np, columns=props['feature_keys'])
             with _OPENFE_TRANSFORM_LOCK:
-              preprocessed = transform_fe(data, model_dict['feature_transformer'])
+              preprocessed_np = transform_fe(data, model_dict['feature_transformer'])
 
-          preds = model_dict['xgboost'].predict(preprocessed)
+          preds = model_dict['xgboost'].predict(preprocessed_np)
           if preds.ndim==2:
               preds = np.argmax(preds, axis=1)
           return preds.tolist()
