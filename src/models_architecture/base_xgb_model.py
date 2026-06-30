@@ -297,7 +297,7 @@ class XGBTrainModel(BaseModel):
             self.class_id_reverse_map = {idx: label for label, idx in class_id_map.items()}
 
         num_classes = int(len(unique_all_classes))
-        xgb_model.set_params(num_class=num_classes)
+        # xgb_model.set_params(num_class=num_classes)
         self.num_classes = num_classes
 
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
