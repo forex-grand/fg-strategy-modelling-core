@@ -65,15 +65,16 @@ class BaseModel:
 
         return serve
 
-    def _build_input_signature(self)->List[keras.Input]:
+    def _build_input_signature(self, sequence_length: Optional[int] = None) -> List[keras.Input]:
         """
             Creates the Input signature for inference.
         """
+        resolved_sequence_length = self.sequence_length if sequence_length is None else sequence_length
         inputs_list = []
-        inputs_list.append(keras.Input(shape=(self.sequence_length,), name="time", dtype=tf.int64))
+        inputs_list.append(keras.Input(shape=(resolved_sequence_length,), name="time", dtype=tf.int64))
         float_fields = ['open','close','high','low','spread','real_volume','tick_volume']
         for field in float_fields:
-            inputs_list.append(keras.Input((self.sequence_length,), name=field, dtype=tf.float32))
+            inputs_list.append(keras.Input((resolved_sequence_length,), name=field, dtype=tf.float32))
         
         return inputs_list
 

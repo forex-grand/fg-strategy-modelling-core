@@ -11,7 +11,8 @@ class LambdaLayer(keras.layers.Layer):
         super().__init__(**kwargs)
 
     def call(self, inputs):
-        return inputs["direction"]
+        direction_values = NoTrainModel._extract_direction_values(inputs, None)
+        return NoTrainModel._to_int_tensor(direction_values)
 
 
 class NoTrainModel(BaseModel):
@@ -116,9 +117,10 @@ class NoTrainModel(BaseModel):
         return self.model
 
     def _build_inference(self) -> keras.Model:
-        inputs = self._build_input_signature(self.sequence_length)
+        inputs = self._build_input_signature(sequence_length=self.sequence_length)
         named_inputs = {tensor.name.split(":")[0]: tensor for tensor in inputs}
-        outputs = self.preprocessor(named_inputs)
+        preprocessed = self.preprocessor(named_inputs)
+        outputs = LambdaLayer()(preprocessed)
 
         model = keras.Model(inputs=inputs, outputs=outputs, name="no_train_inference")
         self.model = model
