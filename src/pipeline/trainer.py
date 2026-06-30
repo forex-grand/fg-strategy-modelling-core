@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import re
 import logging
-from dataclasses import dataclass
 from typing import Type, List
 from pathlib import Path
-import asyncio
 import pandas as pd
 import tensorflow as tf
-from keras import callbacks, metrics, optimizers, Layer
+from keras import Layer
 import glob # Import glob
 import os # Import os
 
@@ -26,28 +23,14 @@ from src.pipeline.statistics_gen import get_target_statistics
 from src.pipeline.pusher import ModelPusher
 from src.models_architecture.base_model import BaseModel
 from src.models_architecture.train_models.simple_model import SimpleNSTrainModel
-from src.models_architecture.train_models.xgb_train_models.xgb_tiny             import XGBTiny
-from src.models_architecture.train_models.xgb_train_models.xgb_simple_shallow   import XGBSimpleShallow
-from src.models_architecture.train_models.xgb_train_models.xgb_simple_slow      import XGBSimpleSlow
-from src.models_architecture.train_models.xgb_train_models.xgb_balanced         import XGBBalanced
-from src.models_architecture.train_models.xgb_train_models.xgb_l1_regularised   import XGBL1Regularised
-from src.models_architecture.train_models.xgb_train_models.xgb_l2_regularised   import XGBL2Regularised
-from src.models_architecture.train_models.xgb_train_models.xgb_gamma_pruned     import XGBGammaPruned
-from src.models_architecture.train_models.xgb_train_models.xgb_column_sampled   import XGBColumnSampled
-from src.models_architecture.train_models.xgb_train_models.xgb_deep_trees       import XGBDeepTrees
-from src.models_architecture.train_models.xgb_train_models.xgb_high_capacity    import XGBHighCapacity
-from src.models_architecture.train_models.xgb_train_models.xgb_elastic_net      import XGBElasticNet
-from src.models_architecture.train_models.xgb_train_models.xgb_high_child_weight import XGBHighChildWeight
-from src.models_architecture.train_models.xgb_train_models.xgb_max_complex      import XGBMaxComplex
  
 from src.pipeline.performance_test import test_model_live_performance
-from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments, EpochMetricsLogger, TrainingResult
+from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments, TrainingResult
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
-CLASS_IDS = [0, 1]
 class Trainer:
-    """Runs training for every (symbol, model_type) combination."""
+    """Runs neural-network training for every (symbol, model_type) combination."""
 
     MODEL_REGISTRY = {
         "simple-ns": SimpleNSTrainModel,
@@ -55,22 +38,6 @@ class Trainer:
         "complex-ns": ComplexNSTrainModel,
         "lstm": LSTMModel,
         "cnn-bi-lstm": CNNBiLSTMModel,
-        'xgb-tiny'           : XGBTiny,
-        'xgb-simple-shallow' : XGBSimpleShallow,
-        'xgb-simple-slow'    : XGBSimpleSlow,
-        # ── Tier 2 · Moderate ────────────────────────────
-        'xgb-balanced'       : XGBBalanced,
-        'xgb-l1-regularised' : XGBL1Regularised,
-        'xgb-l2-regularised' : XGBL2Regularised,
-        'xgb-gamma-pruned'   : XGBGammaPruned,
-        # ── Tier 3 · Advanced ────────────────────────────
-        'xgb-column-sampled' : XGBColumnSampled,
-        'xgb-deep-trees'     : XGBDeepTrees,
-        'xgb-high-capacity'  : XGBHighCapacity,
-        # ── Tier 4 · Complex ─────────────────────────────
-        'xgb-elastic-net'    : XGBElasticNet,
-        'xgb-high-child-weight': XGBHighChildWeight,
-        'xgb-max-complex'    : XGBMaxComplex,
     }
 
     def __init__(
@@ -236,75 +203,35 @@ class Trainer:
         sequence_length = int(self.sequence_length)
         model_class = self.MODEL_REGISTRY[model_type]
         model: BaseModel = model_class(sequence_length=sequence_length, preprocessor=preprocessor)
-        model_obj = None
         metric_values = {}
         _reason_map = {}
-        if re.match(r"^xgb", model_type):
-            try:
-                one_d = train_ds.element_spec[0]
-                fn_args = {
-                  'symbol':symbol,
-                  'group':group,
-                  'train_ds_keys':one_d.keys(),
-                  "min_target_point":min_target_point,
-                  "data_start":data_start,
-                  "data_end":data_end,
-                }
-                model_obj = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
-                metric_values = model.evaluate(eval_ds)
-                evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)            
-                if not evaluator_passed:
-                    LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
-                    LOGGER.warning(f"Failure Reasons: {_reason_map}")
-                    return TrainingResult(
-                        symbol=symbol,
-                        model_type=model_type,
-                        benchmark_passed=True,
-                        evaluator_passed=False,
-                        metrics=metric_values,
-                        model=model,
-                    )
-              
-            except Exception as e:
-                LOGGER.warning(f"Encountered: {str(e)}")
-                # raise e
-                return TrainingResult(
-                        symbol="None",
-                        model_type=model_type,
-                        benchmark_passed=False,
-                        evaluator_passed=False,
-                        metrics=metric_values,
-                        model=model,
-                    )
-        else:
-            fn_args = ModelBuildTrainArguments(
+        fn_args = ModelBuildTrainArguments(
             learning_rate=self.config.learning_rate,
             epochs=self.config.epochs,
             callbacks=[],
             steps_per_epoch=self.config.steps_per_epoch,
-            )
-            try:
-                raw_model = model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
-                model_obj = model.model
+        )
+        try:
+            model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
 
-                metric_values = model.evaluate(eval_ds)
-                LOGGER.info(f"Evaluation results for {symbol} {model_type}: {metric_values}")
+            metric_values = model.evaluate(eval_ds)
+            LOGGER.info(f"Evaluation results for {symbol} {model_type}: {metric_values}")
 
-                evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
-                if not evaluator_passed:
-                    LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
-                    LOGGER.warning(f"Failure Reasons: {_reason_map}")
-                    return TrainingResult(
-                        symbol=symbol,
-                        model_type=model_type,
-                        benchmark_passed=True,
-                        evaluator_passed=False,
-                        metrics=metric_values,
-                        model=model,
-                      )
-            except Exception as e:
-                LOGGER.warning(f"Error training model: {str(e)}")
-                return None
+            evaluator_passed, _reason_map = self.evaluator.evaluate(metric_values)
+            if not evaluator_passed:
+                LOGGER.warning("Evaluator rejected model for %s/%s", symbol, model_type)
+                LOGGER.warning(f"Failure Reasons: {_reason_map}")
+                return TrainingResult(
+                    symbol=symbol,
+                    model_type=model_type,
+                    benchmark_passed=True,
+                    evaluator_passed=False,
+                    metrics=metric_values,
+                    model=model,
+                )
+        except Exception as e:
+            LOGGER.warning(f"Error training model: {str(e)}")
+            return None
                 
         LOGGER.info("PASSED EVALUATION TEST")
         LOGGER.info(f"PASS RESULT: {_reason_map}")

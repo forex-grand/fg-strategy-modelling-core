@@ -1,14 +1,14 @@
 import os
 import warnings
-from re import VERBOSE
+from typing import Optional
+
 from src.models_architecture.base_model import BaseModel
 import tensorflow as tf
 import keras
 from xgboost import XGBClassifier
-from abc import abstractmethod
 import numpy as np
-from xgboost import DMatrix
 from datetime import datetime
+import optuna
 from sklearn.utils.class_weight import compute_sample_weight
 from imblearn.over_sampling import SMOTE
 from imblearn.over_sampling import RandomOverSampler
@@ -103,10 +103,82 @@ class XGBTrainModel(BaseModel):
             return np.argmax(y_np, axis=-1).astype(np.int32)
         return np.reshape(y_np, (-1,)).astype(np.int32)
 
-    @abstractmethod
-    def build_xgb_model(self,):
-        """ Must be implemented by any xgb training version."""
-        pass
+    def build_xgb_model(self, params: Optional[dict] = None):
+        params = dict(params or {})
+        merged_params = {**_COMMON, **params}
+        return XGBClassifier(**merged_params)
+
+    def _resolve_optuna_trials(self) -> int:
+        trials = int(os.getenv("XGB_OPTUNA_TRIALS", "30"))
+        if trials <= 0:
+            raise ValueError("XGB_OPTUNA_TRIALS must be greater than zero.")
+        return trials
+
+    @staticmethod
+    def _resolve_validation_fraction() -> float:
+        fraction = float(os.getenv("XGB_OPTUNA_VALIDATION_FRACTION", "0.2"))
+        if not 0.0 < fraction < 1.0:
+            raise ValueError("XGB_OPTUNA_VALIDATION_FRACTION must be between 0 and 1.")
+        return fraction
+
+    @staticmethod
+    def _suggest_params(trial: optuna.Trial) -> dict:
+        return {
+            "n_estimators": trial.suggest_int("n_estimators", 100, 1200),
+            "max_depth": trial.suggest_int("max_depth", 2, 10),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+            "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+            "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 20.0, log=True),
+            "gamma": trial.suggest_float("gamma", 0.0, 10.0),
+            "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+            "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 20.0, log=True),
+            "max_delta_step": trial.suggest_int("max_delta_step", 0, 10),
+        }
+
+    def _fit_xgb_model(self, model, X_train, y_train, eval_set):
+        X_res, y_res, weights = self._apply_sampling(X_train, y_train)
+        model.fit(
+            X_res,
+            y_res,
+            eval_set=eval_set,
+            sample_weight=weights,
+            verbose=int(os.getenv("XGB_VERBOSE", "0")),
+        )
+        return model
+
+    def _find_best_params(self, X, y, num_classes: int) -> dict:
+        validation_fraction = self._resolve_validation_fraction()
+        split_index = int(len(X) * (1.0 - validation_fraction))
+        if split_index <= 0 or split_index >= len(X):
+            raise ValueError("Not enough XGBoost training samples for Optuna train/validation split.")
+
+        X_train, X_valid = X[:split_index], X[split_index:]
+        y_train, y_valid = y[:split_index], y[split_index:]
+
+        def objective(trial: optuna.Trial) -> float:
+            params = self._suggest_params(trial)
+            model = self.build_xgb_model(params)
+            model.set_params(num_class=num_classes)
+            self._fit_xgb_model(model, X_train, y_train, eval_set=[(X_valid, y_valid)])
+            results = model.evals_result()
+            return float(results["validation_0"]["mlogloss"][-1])
+
+        sampler = optuna.samplers.TPESampler(
+            seed=int(os.getenv("XGB_OPTUNA_RANDOM_STATE", "44"))
+        )
+        study = optuna.create_study(direction="minimize", sampler=sampler)
+        timeout_value = os.getenv("XGB_OPTUNA_TIMEOUT")
+        timeout = int(timeout_value) if timeout_value else None
+        study.optimize(
+            objective,
+            n_trials=self._resolve_optuna_trials(),
+            timeout=timeout,
+            show_progress_bar=False,
+        )
+        print("Best XGBoost Optuna params: ", study.best_params)
+        print("Best XGBoost Optuna validation loss: ", study.best_value)
+        return dict(study.best_params)
 
     def evaluate(self, eval_ds):
         if self.num_classes <= 0:
@@ -168,9 +240,6 @@ class XGBTrainModel(BaseModel):
         y = self.build_model(train_ds.element_spec[0])(x)
         model_ = keras.Model(inputs, y)
         self.model = model_
-        
-        ###initialize and train xgb classifier
-        xgb_model = self.build_xgb_model()
         
         ###training loop
         cardinality = train_ds.cardinality()
@@ -241,12 +310,30 @@ class XGBTrainModel(BaseModel):
           Xe = pd.DataFrame(Xe, columns=train_ds.element_spec[0].keys())
           X, Xe, self.feature_transformer = auto_expand_feature_fe(X, y, Xe, metadata=fn_args)
 
-        X_res, y_res, weights = self._apply_sampling(X, y)
-
-        xgb_model.fit(X_res, y_res, eval_set=[(X, y),(Xe, ye),], sample_weight=weights,
-            verbose=int(os.getenv("XGB_VERBOSE","0")))
+        best_params = self._find_best_params(X, y, num_classes=num_classes)
+        xgb_model = self.build_xgb_model(best_params)
+        xgb_model.set_params(num_class=num_classes)
+        self._fit_xgb_model(xgb_model, X, y, eval_set=[(X, y), (Xe, ye)])
         results = xgb_model.evals_result()
         self.train_loss = results["validation_0"]["mlogloss"][-1]
         self.eval_loss  = results["validation_1"]["mlogloss"][-1]
         self.xgb_model = xgb_model
         return self.xgb_model
+
+    def get_serving_signature(self):
+        input_signature = {
+            "time": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.int64, name="time"),
+            "open": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="open"),
+            "high": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="high"),
+            "close": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="close"),
+            "low": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="low"),
+            "spread": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="spread"),
+            "real_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="real_volume"),
+            "tick_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="tick_volume"),
+        }
+
+        @tf.function(input_signature=[input_signature])
+        def serve(examples):
+            return {"output": self.model(examples)}
+
+        return serve
