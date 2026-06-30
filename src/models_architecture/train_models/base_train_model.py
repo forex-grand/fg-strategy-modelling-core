@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from abc import abstractmethod
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -18,6 +19,11 @@ from sklearn.utils.class_weight import compute_sample_weight
 from src.models_architecture.base_model import BaseModel
 from src.pipeline.feature_selection import auto_expand_feature_fe, transform_fe
 from src.schemas import ModelBuildTrainArguments
+
+try:
+    import keras_tuner as kt
+except ImportError:
+    kt = None
 
 tf.get_logger().setLevel("ERROR")
 
@@ -36,7 +42,12 @@ class TrainModel(BaseModel):
         self.num_classes: int = 0
 
     @abstractmethod
-    def build_model(self, input_spec: dict, num_classes: int) -> tf.keras.Model:
+    def build_model(
+        self,
+        input_spec: dict,
+        num_classes: int,
+        hp: kt.HyperParameters | None = None,
+    ) -> tf.keras.Model:
         """Should be implemented by individual subclasses"""
 
     def _get_metrics(self, num_classes: int | None = None) -> list[keras.metrics.Metric]:
@@ -287,6 +298,156 @@ class TrainModel(BaseModel):
             )
         return dataset.batch(batch_size, drop_remainder=False).prefetch(tf.data.AUTOTUNE)
 
+    @staticmethod
+    def _keras_tuner_enabled() -> bool:
+        return os.getenv("KERAS_TUNER_ENABLED", "true").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    @staticmethod
+    def _require_keras_tuner():
+        if kt is None:
+            raise ImportError(
+                "keras-tuner is required for neural-network hyperparameter search. "
+                "Install project dependencies or set KERAS_TUNER_ENABLED=false."
+            )
+        return kt
+
+    @staticmethod
+    def _resolve_tuner_trials() -> int:
+        trials = int(os.getenv("KERAS_TUNER_TRIALS", os.getenv("NN_KERAS_TUNER_TRIALS", "20")))
+        if trials <= 0:
+            raise ValueError("KERAS_TUNER_TRIALS must be greater than zero.")
+        return trials
+
+    @staticmethod
+    def _resolve_tuner_executions_per_trial() -> int:
+        executions = int(os.getenv("KERAS_TUNER_EXECUTIONS_PER_TRIAL", "1"))
+        if executions <= 0:
+            raise ValueError("KERAS_TUNER_EXECUTIONS_PER_TRIAL must be greater than zero.")
+        return executions
+
+    @staticmethod
+    def _resolve_tuner_seed() -> int:
+        return int(os.getenv("KERAS_TUNER_RANDOM_STATE", "44"))
+
+    @staticmethod
+    def _resolve_tuner_objective() -> kt.Objective:
+        tuner_module = TrainModel._require_keras_tuner()
+        objective_name = os.getenv("KERAS_TUNER_OBJECTIVE", "val_loss").strip()
+        direction = os.getenv("KERAS_TUNER_OBJECTIVE_DIRECTION", "min").strip().lower()
+        if direction not in {"min", "max"}:
+            raise ValueError("KERAS_TUNER_OBJECTIVE_DIRECTION must be either 'min' or 'max'.")
+        return tuner_module.Objective(objective_name, direction=direction)
+
+    def _build_loss(self, hp: kt.HyperParameters | None = None) -> keras.losses.Loss:
+        if hp is None:
+            return keras.losses.CategoricalCrossentropy()
+
+        loss_name = hp.Choice(
+            "loss",
+            values=["categorical_crossentropy", "categorical_focal_crossentropy"],
+            default="categorical_focal_crossentropy",
+        )
+        if loss_name == "categorical_focal_crossentropy":
+            return keras.losses.CategoricalFocalCrossentropy(
+                alpha=hp.Float("focal_alpha", 0.1, 0.75, step=0.05, default=0.25),
+                gamma=hp.Float("focal_gamma", 1.0, 5.0, step=0.5, default=2.0),
+            )
+        return keras.losses.CategoricalCrossentropy()
+
+    def _compile_model(
+        self,
+        model: keras.Model,
+        num_classes: int,
+        hp: kt.HyperParameters | None = None,
+        learning_rate: float = 1e-3,
+    ) -> keras.Model:
+        if hp is not None:
+            learning_rate = hp.Float(
+                "learning_rate",
+                min_value=1e-5,
+                max_value=3e-3,
+                sampling="log",
+                default=learning_rate,
+            )
+
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+            loss=self._build_loss(hp),
+            metrics=self._get_metrics(num_classes=num_classes),
+        )
+        return model
+
+    def _build_compiled_hypermodel(
+        self,
+        hp: kt.HyperParameters,
+        input_spec: dict,
+        num_classes: int,
+        learning_rate: float,
+    ) -> keras.Model:
+        model = self.build_model(input_spec=input_spec, num_classes=num_classes, hp=hp)
+        return self._compile_model(
+            model,
+            num_classes=num_classes,
+            hp=hp,
+            learning_rate=learning_rate,
+        )
+
+    def _find_best_hyperparameters(
+        self,
+        train_model_ds: tf.data.Dataset,
+        eval_model_ds: tf.data.Dataset,
+        input_spec: dict,
+        num_classes: int,
+        fn_args: ModelBuildTrainArguments,
+        callbacks: list[keras.callbacks.Callback],
+    ) -> kt.HyperParameters | None:
+        if not self._keras_tuner_enabled():
+            return None
+
+        tuner_module = self._require_keras_tuner()
+        tuner_dir = Path(os.getenv("KERAS_TUNER_DIRECTORY", ".keras_tuner"))
+        project_name = os.getenv("KERAS_TUNER_PROJECT_NAME", self.__class__.__name__.lower())
+        tuner = tuner_module.RandomSearch(
+            hypermodel=lambda hp: self._build_compiled_hypermodel(
+                hp,
+                input_spec=input_spec,
+                num_classes=num_classes,
+                learning_rate=fn_args.learning_rate,
+            ),
+            objective=self._resolve_tuner_objective(),
+            max_trials=self._resolve_tuner_trials(),
+            executions_per_trial=self._resolve_tuner_executions_per_trial(),
+            overwrite=os.getenv("KERAS_TUNER_OVERWRITE", "true").strip().lower()
+            in {"1", "true", "yes", "on"},
+            directory=str(tuner_dir),
+            project_name=project_name,
+            seed=self._resolve_tuner_seed(),
+        )
+
+        tuner_epochs = int(os.getenv("KERAS_TUNER_EPOCHS", str(min(int(fn_args.epochs), 20))))
+        search_kwargs: dict[str, Any] = {
+            "x": train_model_ds,
+            "validation_data": eval_model_ds,
+            "epochs": tuner_epochs,
+            "callbacks": callbacks,
+            "verbose": int(os.getenv("KERAS_TUNER_VERBOSE", "1")),
+        }
+        if fn_args.steps_per_epoch and fn_args.steps_per_epoch > 0:
+            search_kwargs["steps_per_epoch"] = fn_args.steps_per_epoch
+
+        tuner.search(**search_kwargs)
+        best_hps = tuner.get_best_hyperparameters(num_trials=1)
+        if not best_hps:
+            return None
+
+        print("Best Keras Tuner hyperparameters: ", best_hps[0].values)
+        return best_hps[0]
+
     def build_train_model(
         self,
         train_ds: tf.data.Dataset,
@@ -357,26 +518,51 @@ class TrainModel(BaseModel):
 
         self.num_classes = num_classes
         with self.strategy.scope():
-            model = self.build_model(input_spec=input_spec, num_classes=num_classes)
-            model.compile(
-                optimizer=keras.optimizers.Adam(learning_rate=fn_args.learning_rate),
-                loss=keras.losses.CategoricalCrossentropy(),
-                metrics=self._get_metrics(num_classes=num_classes),
-            )
+            warmup_model = self.build_model(input_spec=input_spec, num_classes=num_classes)
 
-        callbacks: list[keras.callbacks.Callback] = [
-            keras.callbacks.EarlyStopping(
-                monitor="val_loss",
-                patience=int(os.getenv("EARLY_STOPPING_PATIENCE", "10")),
-                restore_best_weights=True,
-            )
-        ]
+        def make_callbacks() -> list[keras.callbacks.Callback]:
+            user_callbacks = [
+                callback
+                for callback in (fn_args.callbacks or [])
+                if isinstance(callback, keras.callbacks.Callback)
+            ]
+            return user_callbacks + [
+                keras.callbacks.EarlyStopping(
+                    monitor="val_loss",
+                    patience=int(os.getenv("EARLY_STOPPING_PATIENCE", "10")),
+                    restore_best_weights=True,
+                )
+            ]
+
+        best_hp = self._find_best_hyperparameters(
+            train_model_ds=train_model_ds,
+            eval_model_ds=eval_model_ds,
+            input_spec=input_spec,
+            num_classes=num_classes,
+            fn_args=fn_args,
+            callbacks=make_callbacks(),
+        )
+
+        with self.strategy.scope():
+            if best_hp is None:
+                model = self._compile_model(
+                    warmup_model,
+                    num_classes=num_classes,
+                    learning_rate=fn_args.learning_rate,
+                )
+            else:
+                model = self._build_compiled_hypermodel(
+                    best_hp,
+                    input_spec=input_spec,
+                    num_classes=num_classes,
+                    learning_rate=fn_args.learning_rate,
+                )
 
         fit_kwargs: dict[str, Any] = {
             "x": train_model_ds,
             "validation_data": eval_model_ds,
             "epochs": fn_args.epochs,
-            "callbacks": callbacks,
+            "callbacks": make_callbacks(),
             "verbose": 1,
         }
         if fn_args.steps_per_epoch and fn_args.steps_per_epoch > 0:

@@ -9,9 +9,7 @@ Modules:
     - train_models: Trainable model implementations
         - base_train_model: Base class for trainable models
         - lstm_model: LSTM-based architecture
-        - simple_model: Simple CNN architecture
         - conservative_model: Conservative ensemble model
-        - complex_model: Complex multi-tower architecture
         - cnn_bi_lstm: Bidirectional LSTM with CNN
 """
 

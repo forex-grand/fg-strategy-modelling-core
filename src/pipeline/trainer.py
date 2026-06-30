@@ -11,7 +11,6 @@ from keras import Layer
 import glob # Import glob
 import os # Import os
 
-from src.models_architecture.train_models.complex_model import ComplexNSTrainModel
 from src.models_architecture.train_models.cnn_bi_lstm import CNNBiLSTMModel
 from src.models_architecture.train_models.conservative_model import ConservativeNSTrainModel
 from src.models_architecture.train_models.lstm_model import LSTMModel
@@ -22,7 +21,6 @@ from src.pipeline.preprocessing.base_preprocessor import PreprocessBase
 from src.pipeline.statistics_gen import get_target_statistics
 from src.pipeline.pusher import ModelPusher
 from src.models_architecture.base_model import BaseModel
-from src.models_architecture.train_models.simple_model import SimpleNSTrainModel
  
 from src.pipeline.performance_test import test_model_live_performance
 from src.schemas import SymbolIn, TARGET_MODEL_TYPES, ModelBuildTrainArguments, TrainingResult
@@ -33,9 +31,7 @@ class Trainer:
     """Runs neural-network training for every (symbol, model_type) combination."""
 
     MODEL_REGISTRY = {
-        "simple-ns": SimpleNSTrainModel,
         "conservative-ns": ConservativeNSTrainModel,
-        "complex-ns": ComplexNSTrainModel,
         "lstm": LSTMModel,
         "cnn-bi-lstm": CNNBiLSTMModel,
     }
