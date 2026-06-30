@@ -115,23 +115,20 @@ class NoTrainModel(BaseModel):
         self.model = model
         self.model.compile()
         return self.model
+    
+    def get_serving_signature(self):
+        input_signature = {
+            "time": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.int64, name="time"),
+            "open": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="open"),
+            "high": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="high"),
+            "close": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="close"),
+            "low": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="low"),
+            "spread": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="spread"),
+            "real_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="real_volume"),
+            "tick_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="tick_volume"),
+        }
 
-    def _build_inference(self) -> keras.Model:
-        inputs = self._build_input_signature(sequence_length=self.sequence_length)
-        named_inputs = {tensor.name.split(":")[0]: tensor for tensor in inputs}
-        preprocessed = self.preprocessor(named_inputs)
-        outputs = LambdaLayer()(preprocessed)
-
-        model = keras.Model(inputs=inputs, outputs=outputs, name="no_train_inference")
-        self.model = model
-        return model
-
-    def save(self, path: str):
-        return self.save_inference_model(
-            sequence_length=self.sequence_length,
-            metadata={"requested_path": path},
-        )
-
-    @staticmethod
-    def load(path: str) -> keras.Model:
-        return keras.models.load_model(path)
+        @tf.function(input_signature=[input_signature])
+        def serve(examples):
+            return {"output":self.model(examples)}
+        return serve
