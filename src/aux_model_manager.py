@@ -225,15 +225,16 @@ class AuxilaryModelManager:
       Run saved-model inference on a feature dictionary.
       Returns a list of per-row prediction lists.
       """
-      preds = model(data)['output']
+      preds = model(**data)['output']
       preds_np = preds.numpy() if hasattr(preds, 'numpy') else np.asarray(preds)
       if preds_np.ndim == 1:
-          preds_np = preds_np.reshape(-1, 1)
+          preds_np = preds_np.reshape(-1,)
+
       return preds_np.tolist()
 
   def run_xgboost_inference(self, model_dict: dict, data: dict[str, tf.Tensor]) -> list[float]:
       try:
-          preprocessed = model_dict['model'](data)['output']
+          preprocessed = model_dict['model'](**data)['output']
           preprocessed_np = preprocessed.numpy() if hasattr(preprocessed, 'numpy') else np.asarray(preprocessed)
           props = model_dict['metadata']
           if props['has_feature_transformer']:
@@ -258,7 +259,7 @@ class AuxilaryModelManager:
           model = self.model
       data = self.prepare_data(data)
       model_type = model["metadata"].get("model_type", "none")
-      if "nn" in model_type.lower():
+      if "nn" in model_type.lower() or model_type.lower()=='no-train':
           preds = self.run_nn_inference(model["model"], data)
       else:
           preds = self.run_xgboost_inference(model, data)
