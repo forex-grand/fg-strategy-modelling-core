@@ -259,10 +259,10 @@ class AuxilaryModelManager:
           model = self.model
       data = self.prepare_data(data)
       model_type = model["metadata"].get("model_type", "none")
-      if "nn" in model_type.lower() or model_type.lower()=='no-train':
-          preds = self.run_nn_inference(model["model"], data)
-      else:
+      if "xgb" in model_type.lower():
           preds = self.run_xgboost_inference(model, data)
+      else:
+          preds = self.run_nn_inference(model["model"], data)
       
       return preds
 
