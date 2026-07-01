@@ -422,6 +422,7 @@ class TrainModel(BaseModel):
             objective=self._resolve_tuner_objective(),
             max_trials=self._resolve_tuner_trials(),
             executions_per_trial=self._resolve_tuner_executions_per_trial(),
+            distribution_strategy=self.strategy,
             overwrite=os.getenv("KERAS_TUNER_OVERWRITE", "true").strip().lower()
             in {"1", "true", "yes", "on"},
             directory=str(tuner_dir),
