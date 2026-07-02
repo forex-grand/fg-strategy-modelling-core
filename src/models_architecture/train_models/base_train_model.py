@@ -40,6 +40,7 @@ class TrainModel(BaseModel):
         self.nn_model: keras.Model | None = None
         self.openfe_nn_model: keras.Model | None = None
         self.num_classes: int = 0
+        self.initial_output_bias: np.ndarray | None = None
 
     @abstractmethod
     def build_model(
@@ -159,6 +160,37 @@ class TrainModel(BaseModel):
             y.astype(np.int64),
             num_classes=num_classes,
         ).astype("float32")
+
+    @staticmethod
+    def _env_flag(name: str, default: bool = False) -> bool:
+        value = os.getenv(name)
+        if value is None:
+            return default
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _use_initial_output_bias(self, fn_args: ModelBuildTrainArguments) -> bool:
+        if "INITIALIZE_OUTPUT_BIAS" in os.environ:
+            return self._env_flag("INITIALIZE_OUTPUT_BIAS")
+        if "USE_INITIAL_OUTPUT_BIAS" in os.environ:
+            return self._env_flag("USE_INITIAL_OUTPUT_BIAS")
+        return bool(getattr(fn_args, "initialize_output_bias", False))
+
+    @staticmethod
+    def _compute_initial_output_bias(y_class: np.ndarray, num_classes: int) -> np.ndarray:
+        counts = np.bincount(y_class.astype(np.int64), minlength=num_classes).astype("float32")
+        total = float(np.sum(counts))
+        if total <= 0:
+            raise ValueError("Cannot initialize output bias because the training labels are empty.")
+
+        probabilities = counts / total
+        probabilities = np.clip(probabilities, np.finfo("float32").tiny, 1.0)
+        probabilities = probabilities / np.sum(probabilities)
+        return np.log(probabilities).astype("float32")
+
+    def _output_bias_initializer(self) -> keras.initializers.Initializer | str:
+        if self.initial_output_bias is None:
+            return "zeros"
+        return keras.initializers.Constant(self.initial_output_bias)
 
     @staticmethod
     def _collect_dataset_as_frame(dataset: tf.data.Dataset, num_batches: int):
@@ -478,6 +510,19 @@ class TrainModel(BaseModel):
             y_eval_class = np.vectorize(class_id_map.get)(y_eval_class)
 
         num_classes = int(unique_classes.size)
+        if self._use_initial_output_bias(fn_args):
+            self.initial_output_bias = self._compute_initial_output_bias(
+                y_train_class,
+                num_classes=num_classes,
+            )
+            train_counts = np.bincount(y_train_class.astype(np.int64), minlength=num_classes)
+            print(
+                "Initial output bias enabled. Training class counts: ",
+                train_counts.tolist(),
+            )
+        else:
+            self.initial_output_bias = None
+
         use_openfe = self._feature_generator() == "OPENFE"
         if use_openfe:
             X_train, X_eval, self.feature_transformer = auto_expand_feature_fe(

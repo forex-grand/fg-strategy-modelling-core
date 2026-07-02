@@ -41,6 +41,7 @@ class ModelBuildTrainArguments(BaseModel):
     epochs: int = 50
     callbacks: List[dict]
     steps_per_epoch: int
+    initialize_output_bias: bool = False
 
 class SymbolIn(BaseModel):
     symbol: str

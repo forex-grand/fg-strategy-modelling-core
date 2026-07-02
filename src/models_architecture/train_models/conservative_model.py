@@ -41,7 +41,11 @@ class ConservativeNSTrainModel(TrainModel):
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation("relu")(x)
             x = keras.layers.Dropout(dropout_rate)(x)
-        output = keras.layers.Dense(num_classes, activation="softmax")(x)
+        output = keras.layers.Dense(
+            num_classes,
+            activation="softmax",
+            bias_initializer=self._output_bias_initializer(),
+        )(x)
         return keras.Model(inputs, output)
 
     

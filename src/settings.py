@@ -25,6 +25,7 @@ Environment Variables:
     LEARNING_RATE: Model learning rate (default: 1e-3)
     EPOCHS: Number of training epochs (default: 50)
     STEPS_PER_EPOCH: Steps per epoch (default: 1000)
+    INITIALIZE_OUTPUT_BIAS: Initialize final Dense layer bias from training class rates (default: false)
     EVAL_MIN_PRECISION: Minimum precision threshold (default: 0.55)
     EVAL_MIN_RECALL: Minimum recall threshold (default: 0.4)
     MAX_OVERFIT_GAP: Maximum overfitting gap (default: 0.2)
@@ -67,6 +68,7 @@ class Settings:
         learning_rate: Learning rate for model optimization
         epochs: Number of training epochs
         steps_per_epoch: Steps per training epoch
+        initialize_output_bias: Whether to initialize output bias from training class rates
         eval_min_precision: Minimum precision benchmark for evaluation
         eval_min_recall: Minimum recall benchmark for evaluation
         eval_max_overfit_gap: Maximum allowed overfitting gap
@@ -138,6 +140,10 @@ class Settings:
     )
     steps_per_epoch: Optional[int] = field(
         default_factory=lambda: int(os.getenv('STEPS_PER_EPOCH', 1000))
+    )
+    initialize_output_bias: bool = field(
+        default_factory=lambda: os.getenv("INITIALIZE_OUTPUT_BIAS", "false").strip().lower()
+        in {"1", "true", "yes", "on"}
     )
     ##evaluation benchmarks
     eval_min_precision: Optional[float] = field(

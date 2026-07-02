@@ -206,6 +206,7 @@ class Trainer:
             epochs=self.config.epochs,
             callbacks=[],
             steps_per_epoch=self.config.steps_per_epoch,
+            initialize_output_bias=self.config.initialize_output_bias,
         )
         try:
             model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
