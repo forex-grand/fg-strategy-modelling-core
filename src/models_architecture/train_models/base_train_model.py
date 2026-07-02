@@ -347,11 +347,7 @@ class TrainModel(BaseModel):
         if hp is None:
             return keras.losses.CategoricalCrossentropy()
 
-        loss_name = hp.Choice(
-            "loss",
-            values=["categorical_crossentropy", "categorical_focal_crossentropy"],
-            default="categorical_focal_crossentropy",
-        )
+        loss_name = "categorical_focal_crossentropy"
         if loss_name == "categorical_focal_crossentropy":
             return keras.losses.CategoricalFocalCrossentropy(
                 alpha=hp.Float("focal_alpha", 0.1, 0.75, step=0.05, default=0.25),
@@ -529,9 +525,10 @@ class TrainModel(BaseModel):
             ]
             return user_callbacks + [
                 keras.callbacks.EarlyStopping(
-                    monitor="val_loss",
+                    monitor=str(os.getenv("KERAS_TUNER_OBJECTIVE", "val_loss").strip()),
                     patience=int(os.getenv("EARLY_STOPPING_PATIENCE", "10")),
                     restore_best_weights=True,
+                    mode=os.getenv("KERAS_TUNER_OBJECTIVE_DIRECTION", "min").strip().lower(),
                 )
             ]
 
