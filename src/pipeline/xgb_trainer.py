@@ -70,7 +70,8 @@ class XGBTrainer:
         return tf.io.parse_example(data, features=preprocessor.features_metadata())
 
     def preprocess(self, data, preprocess_layer: Layer):
-        data = preprocess_layer(data)
+        if self.preprocess_at_datagen:
+            data = preprocess_layer(data)
         target = data.pop("target")
         return data, target
 
