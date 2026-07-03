@@ -71,7 +71,7 @@ class XGBTrainer:
 
     def preprocess(self, data, preprocess_layer: Layer):
         if not self.preprocess_at_datagen:
-            data = preprocess_layer(data)
+            data = preprocess_layer(data, training=True)
         target = data.pop("target")
         return data, target
 
