@@ -253,8 +253,9 @@ class XGBTrainModel(BaseModel):
         y = None
         ts = datetime.now()
         first_batch_seen = False
-        exclude_class = int(os.getenv("EXCLUDE_CLASS_ID", "-1"))
-       
+        exclude_id = os.getenv("EXCLUDE_CLASS_ID", "-1")
+        if exclude_id:
+            exclude_id = int(exclude_id)
         for batch_x, batch_y in train_ds.take(num_batches):
             Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = self._to_class_ids(batch_y)
