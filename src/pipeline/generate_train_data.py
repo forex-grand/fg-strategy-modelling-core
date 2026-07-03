@@ -561,6 +561,9 @@ class GenerateTrainData:
             "eval_start_time": eval_df["time"].iloc[0].isoformat(),
             "eval_end_time": eval_df["time"].iloc[-1].isoformat(),
             "processed_data":self.preprocess_data,
+            "filter_by_model":self.filter_by_model,
+"filter_model_id":self.filter_model_id,
+"filter_target_label_id":self.filter_target_label_id,
         }
 
     def _find_existing_version_paths(self, *, symbol_pair, instrument_group, metadata):
