@@ -253,9 +253,14 @@ class XGBTrainModel(BaseModel):
         y = None
         ts = datetime.now()
         first_batch_seen = False
+        exclude_class = int(os.getenv("EXCLUDE_CLASS_ID", "-1"))
+       
         for batch_x, batch_y in train_ds.take(num_batches):
             Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = self._to_class_ids(batch_y)
+            exclude_mask = (yd==exclude_id)
+            Xd = Xd[exclude_mask]
+            yd = yd[exclude_mask]
             if first_batch_seen:
                 X  = np.concatenate([X, Xd], axis=0)
                 y  = np.concatenate([y, yd], axis=0)
@@ -271,6 +276,9 @@ class XGBTrainModel(BaseModel):
         for batch_x, batch_y in eval_ds.take(num_batches):          
             Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = self._to_class_ids(batch_y)
+            exclude_mask = (yd==exclude_id)
+            Xd = Xd[exclude_mask]
+            yd = yd[exclude_mask]
             if first_batch_seen:
                 Xe = np.concatenate([Xe, Xd], axis=0)
                 ye = np.concatenate([ye, yd], axis=0)
