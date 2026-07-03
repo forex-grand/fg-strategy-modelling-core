@@ -21,6 +21,7 @@ _COMMON = dict(
     use_label_encoder=False,
     random_state=44,
     tree_method="hist",
+    device=os.getenv("XGB_DEVICE", "cpu").strip().lower(),
     eval_metric="mlogloss",
     verbosity=0,
     n_jobs=-1,
