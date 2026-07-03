@@ -42,6 +42,7 @@ class XGBTrainer:
         upload_models: bool = False,
         target_percentile: int = 95,
         use_dataframe_format: bool = False,
+        preprocess_at_data_generation = True,
     ) -> None:
         self.symbols = symbols
         self.preprocessor_class = preprocessor_class
@@ -52,12 +53,13 @@ class XGBTrainer:
         self.upload_models = upload_models
         self.target_percentile = target_percentile
         self.use_dataframe_format = use_dataframe_format
+        self.preprocess_at_datagen = preprocess_at_data_generation
         self.config = Settings()
         self.preprocessor = preprocessor_class(sequence_length)
         self.data_gen = GenerateTrainData(
             train_base_bucket=self.config.train_bucket_name,
             eval_base_bucket=self.config.eval_bucket_name,
-            preprocess_data=True,
+            preprocess_data=preprocess_at_data_generation,
             preprocess_layer=self.preprocessor,
             use_dataframe_format=use_dataframe_format,
         )
@@ -68,6 +70,7 @@ class XGBTrainer:
         return tf.io.parse_example(data, features=preprocessor.features_metadata())
 
     def preprocess(self, data, preprocess_layer: Layer):
+        data = preprocess_layer(data)
         target = data.pop("target")
         return data, target
 
@@ -99,13 +102,13 @@ class XGBTrainer:
                 num_parallel_reads=tf.data.AUTOTUNE,
             )
             data = data.map(lambda x: self.deserialize(x, preprocessor), num_parallel_calls=tf.data.AUTOTUNE)
-
+       
+        data = data.batch(self.config.batch_size, drop_remainder=True)
         data = data.map(
             lambda x: self.preprocess(x, preprocess_layer=preprocessor),
             num_parallel_calls=tf.data.AUTOTUNE,
         )
         data = data.cache()
-        data = data.batch(self.config.batch_size, drop_remainder=True)
         return data.prefetch(tf.data.AUTOTUNE)
 
     def run(self) -> list[TrainingResult]:
