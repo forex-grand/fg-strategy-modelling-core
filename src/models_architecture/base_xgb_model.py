@@ -259,7 +259,7 @@ class XGBTrainModel(BaseModel):
         for batch_x, batch_y in train_ds.take(num_batches):
             Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = self._to_class_ids(batch_y)
-            exclude_mask = (yd==exclude_id)
+            exclude_mask = (yd!=exclude_id)
             Xd = Xd[exclude_mask]
             yd = yd[exclude_mask]
             if first_batch_seen:
@@ -277,7 +277,7 @@ class XGBTrainModel(BaseModel):
         for batch_x, batch_y in eval_ds.take(num_batches):          
             Xd = np.stack([tf.squeeze(value) for value in batch_x.values()], axis=-1)
             yd = self._to_class_ids(batch_y)
-            exclude_mask = (yd==exclude_id)
+            exclude_mask = (yd!=exclude_id)
             Xd = Xd[exclude_mask]
             yd = yd[exclude_mask]
             if first_batch_seen:
