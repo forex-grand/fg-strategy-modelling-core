@@ -126,7 +126,7 @@ class XGBTrainer:
         self.data_gen = GenerateTrainData(
             train_base_bucket=self.config.train_bucket_name,
             eval_base_bucket=self.config.eval_bucket_name,
-            preprocess_data=True,
+            preprocess_data=self.preprocess_at_datagen,
             preprocess_layer=preprocessor,
             use_dataframe_format=self.use_dataframe_format,
             filter_by_model=use_aux_model,
