@@ -685,12 +685,7 @@ class GenerateTrainData:
 
     @staticmethod
     def _metadata_matches(existing_metadata: dict, current_metadata: dict) -> bool:
-        keys_to_match = {
-            "data_source", "instrument_group", "symbol_pair", "timeframe",
-            "sequence_length", "stride", "target_type", "target_params", 
-            "train_start_time", "train_end_time",
-            "eval_start_time", "eval_end_time",
-        }
+        keys_to_match = set(current_metadata.keys())
         return all(
             existing_metadata.get(key) == current_metadata.get(key) for key in keys_to_match
         )
