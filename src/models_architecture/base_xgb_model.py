@@ -1,4 +1,3 @@
-
 import os
 import warnings
 from typing import Optional
@@ -6,24 +5,23 @@ from typing import Optional
 from src.models_architecture.base_model import BaseModel
 import tensorflow as tf
 import keras
-from xgboost import XGBClassifier
+import xgboost as xgb
 import numpy as np
 from datetime import datetime
 import optuna
-from sklearn.utils.class_weight import compute_sample_weight
+from sklearn.utils.class_weight import compute_sample_weight, compute_class_weight
 from imblearn.over_sampling import SMOTE
 from imblearn.over_sampling import RandomOverSampler
 from imblearn.under_sampling import RandomUnderSampler
 from src.pipeline.feature_selection import auto_expand_feature_fe, transform_fe
 import pandas as pd
 
-# NOTE: objective / num_class / eval_metric are now resolved dynamically based on
-# num_classes (see build_xgb_model). Do not hardcode them here.
+# NOTE: objective / num_class / eval_metric / device / scale_pos_weight are resolved
+# dynamically based on num_classes and the training data (see build_xgb_params and
+# _compute_scale_pos_weight). Do not hardcode them here.
 _COMMON = dict(
-    use_label_encoder=False,
     random_state=44,
     tree_method="hist",
-    device=os.getenv("XGB_DEVICE", "cpu").strip().lower(),
     verbosity=0,
     n_jobs=-1,
 )
@@ -33,6 +31,11 @@ cpu_counts = os.cpu_count()
 class XGBTrainModel(BaseModel):
     """
       The model on the base model object is the preprocessing model object that outputs an array of numpy.
+
+      Uses the native xgboost.train()/DMatrix API (Booster) rather than the XGBClassifier
+      sklearn wrapper. Empirically, native xgb.train() + scale_pos_weight produced
+      meaningfully better validation precision on this project's imbalanced binary
+      targets than the classifier-wrapper + SMOTE/sample_weight approach.
     """
 
     def __init__(self, preprocessor, sequence_length: int):
@@ -43,6 +46,8 @@ class XGBTrainModel(BaseModel):
         self.num_classes = 0
         self.class_id_map = None
         self.class_id_reverse_map = None
+        self.xgb_model: Optional[xgb.Booster] = None
+        self.best_iteration: Optional[int] = None
 
     @staticmethod
     def _sampling_strategy() -> str:
@@ -54,6 +59,13 @@ class XGBTrainModel(BaseModel):
         ).strip().lower().replace("-", "_")
 
     def _apply_sampling(self, X, y):
+        """
+        Returns (X, y, sample_weight).
+
+        Only used for num_classes > 2. scale_pos_weight (the mechanism used for binary
+        targets, see _compute_scale_pos_weight) is a binary-only xgboost parameter, so
+        multiclass targets still go through this per-row sample_weight / resampling path.
+        """
         strategy = self._sampling_strategy()
         sample_weight = None
 
@@ -129,65 +141,91 @@ class XGBTrainModel(BaseModel):
         return metric, higher_is_better
 
     @staticmethod
-    def _best_metric_value(model, results: dict, dataset_key: str, metric_key: str) -> float:
-        """
-        Reads the metric value at the model's best_iteration rather than the last
-        boosting round. With early stopping enabled, the last round is frequently
-        *not* the best one (that's the point of early stopping) - indexing with [-1]
-        silently reports a worse-than-actual score and, inside the Optuna objective,
-        can steer the search toward configs that merely plateau nicely rather than
-        configs that generalize best.
-        """
-        values = results[dataset_key][metric_key]
-        best_iteration = getattr(model, "best_iteration", None)
-        if best_iteration is not None:
-            idx = min(int(best_iteration), len(values) - 1)
-            return float(values[idx])
-        return float(values[-1])
-
-    @staticmethod
     def _resolve_early_stopping_rounds() -> Optional[int]:
         rounds = int(os.getenv("XGB_EARLY_STOPPING_ROUNDS", "50"))
         return rounds if rounds > 0 else None
 
-    def build_xgb_model(self, params: Optional[dict] = None, num_classes: int = 2):
-        """
-        Builds an XGBClassifier with objective/num_class/eval_metric chosen based on
-        num_classes. binary:logistic must NOT receive num_class - passing it causes
-        XGBoost to emit num_classes predictions per sample, which blows up shape
-        checks against the (single-column) labels array.
+    @staticmethod
+    def _resolve_num_boost_round() -> int:
+        rounds = int(os.getenv("XGB_NUM_BOOST_ROUND", "500"))
+        if rounds <= 0:
+            raise ValueError("XGB_NUM_BOOST_ROUND must be greater than zero.")
+        return rounds
 
-        early_stopping_rounds is set here (constructor) rather than in .fit(), since
-        that's where xgboost>=2.0's sklearn API expects it. Without this, n_estimators
-        values from a wide Optuna search (up to 1200) can overfit badly on a dataset
-        this size, which tanks validation precision even though training loss looks fine.
+    @staticmethod
+    def _resolve_best_iteration(booster: xgb.Booster) -> int:
+        """
+        best_iteration only exists on the Booster when early stopping actually ran
+        (confirmed empirically: accessing it otherwise raises AttributeError with
+        "best_iteration is only defined when early stopping is used"). Falls back to
+        the last boosted round when early stopping was disabled.
+        """
+        best_iteration = getattr(booster, "best_iteration", None)
+        if best_iteration is not None:
+            return int(best_iteration)
+        return int(booster.num_boosted_rounds()) - 1
+
+    @staticmethod
+    def _resolve_best_score(booster: xgb.Booster, evals_result: dict, dataset_key: str, metric_key: str) -> float:
+        """
+        best_score has the same early-stopping-only availability caveat as
+        best_iteration (see _resolve_best_iteration). Falls back to reading the last
+        recorded value for dataset_key/metric_key out of evals_result.
+        """
+        best_score = getattr(booster, "best_score", None)
+        if best_score is not None:
+            return float(best_score)
+        return float(evals_result[dataset_key][metric_key][-1])
+
+    def build_xgb_params(
+        self,
+        params: Optional[dict] = None,
+        num_classes: int = 2,
+        scale_pos_weight: Optional[float] = None,
+    ) -> dict:
+        """
+        Builds the native xgboost params dict (for xgb.train/Booster), with
+        objective/eval_metric/num_class/device chosen based on num_classes.
+
+        binary:logistic must NOT receive num_class - confirmed empirically this raises
+        "Check failed: info.labels.Size() == preds.Size()" because XGBoost then emits
+        num_classes predictions per sample against single-column binary labels.
+
+        scale_pos_weight is a binary-only xgboost parameter; it is ignored (popped)
+        for num_classes > 2, where per-row sample_weight at DMatrix construction time
+        should be used instead (see _apply_sampling).
+
+        device is resolved here (not at module import time) so that setting the
+        XGB_DEVICE env var after this module has already been imported - a common
+        Colab pattern - still takes effect.
         """
         params = dict(params or {})
         common = dict(_COMMON)
+        common["device"] = os.getenv("XGB_DEVICE", "cpu").strip().lower()
         metric, _ = self._resolve_metric_config(num_classes)
 
         if num_classes <= 2:
             common["objective"] = "binary:logistic"
             common["eval_metric"] = metric
             common.pop("num_class", None)
+            if scale_pos_weight is not None:
+                common["scale_pos_weight"] = scale_pos_weight
         else:
             common["objective"] = "multi:softprob"
             common["eval_metric"] = metric
             common["num_class"] = num_classes
+            common.pop("scale_pos_weight", None)
 
-        early_stopping_rounds = self._resolve_early_stopping_rounds()
-        if early_stopping_rounds is not None:
-            common["early_stopping_rounds"] = early_stopping_rounds
-        else:
-            common.pop("early_stopping_rounds", None)
-
-        merged_params = {**common, **params}
-        # Guard against a caller accidentally injecting num_class via params/best_params
-        # when we're in binary mode (e.g. stale Optuna best_params from a prior multiclass run).
+        merged = {**common, **params}
+        # num_boost_round/n_estimators are xgb.train() arguments, not booster params -
+        # confirmed empirically that leaving them in the params dict doesn't error, but
+        # does trigger a "Parameters: {...} are not used" UserWarning on every call.
+        merged.pop("num_boost_round", None)
+        merged.pop("n_estimators", None)
+        merged.pop("use_label_encoder", None)
         if num_classes <= 2:
-            merged_params.pop("num_class", None)
-
-        return XGBClassifier(**merged_params)
+            merged.pop("num_class", None)
+        return merged
 
     def _resolve_optuna_trials(self) -> int:
         trials = int(os.getenv("XGB_OPTUNA_TRIALS", "30"))
@@ -230,8 +268,14 @@ class XGBTrainModel(BaseModel):
 
     @staticmethod
     def _suggest_params(trial: optuna.Trial) -> dict:
+        """
+        Suggests booster hyperparameters plus num_boost_round. num_boost_round is not
+        a native xgboost booster param - it's an argument to xgb.train() - so callers
+        must pop it out of this dict before passing the rest through build_xgb_params
+        (build_xgb_params also defensively strips it, in case a caller forgets).
+        """
         return {
-            "n_estimators": trial.suggest_int("n_estimators", 100, 1200),
+            "num_boost_round": trial.suggest_int("num_boost_round", 100, 1200),
             "max_depth": trial.suggest_int("max_depth", 2, 10),
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
             "subsample": trial.suggest_float("subsample", 0.5, 1.0),
@@ -243,18 +287,73 @@ class XGBTrainModel(BaseModel):
             "max_delta_step": trial.suggest_int("max_delta_step", 0, 10),
         }
 
-    def _fit_xgb_model(self, model, X_train, y_train, eval_set):
-        X_res, y_res, weights = self._apply_sampling(X_train, y_train)
-        model.fit(
-            X_res,
-            y_res,
-            eval_set=eval_set,
-            sample_weight=weights,
-            verbose=int(os.getenv("XGB_VERBOSE", "0")),
-        )
-        return model
+    @staticmethod
+    def _compute_scale_pos_weight(y) -> Optional[float]:
+        """
+        Binary-only. Mirrors the working reference script's approach: compute_class_weight
+        ('balanced', ...) then take the ratio of the two resulting weights. Returns None
+        if y doesn't have exactly 2 classes (e.g. a batch that's missing one class, or a
+        genuinely multiclass target - callers should only use this when num_classes == 2).
+        """
+        classes = np.unique(y)
+        if len(classes) != 2:
+            return None
+        class_weights = compute_class_weight(class_weight="balanced", classes=classes, y=y)
+        # np.unique returns classes sorted ascending; this pipeline guarantees contiguous
+        # zero-based labels upstream (see the remapping block in build_train_model), so
+        # classes[0] == 0 and classes[1] == 1 here.
+        return float(class_weights[1] / class_weights[0])
 
-    def _find_best_params(self, X, y, num_classes: int) -> dict:
+    @staticmethod
+    def _make_dmatrix(X, y=None, sample_weight=None) -> xgb.DMatrix:
+        if y is not None:
+            return xgb.DMatrix(X, label=y, weight=sample_weight)
+        return xgb.DMatrix(X)
+
+    def _fit_booster(self, params: dict, dtrain: xgb.DMatrix, evals: list, num_boost_round: int):
+        """
+        Trains via the native xgb.train() API. Returns (booster, evals_result).
+
+        early_stopping_rounds is only passed when there's at least one eval set,
+        matching xgb.train()'s requirement that early stopping needs something to
+        monitor. Confirmed empirically that when there IS more than one entry in
+        `evals`, xgboost uses the LAST entry for early-stopping decisions - so callers
+        should always put the validation set last (as build_train_model does).
+        """
+        early_stopping_rounds = self._resolve_early_stopping_rounds() if evals else None
+        evals_result: dict = {}
+        booster = xgb.train(
+            params=params,
+            dtrain=dtrain,
+            num_boost_round=num_boost_round,
+            evals=evals,
+            early_stopping_rounds=early_stopping_rounds,
+            verbose_eval=int(os.getenv("XGB_VERBOSE", "0")),
+            evals_result=evals_result,
+        )
+        return booster, evals_result
+
+    def _predict_proba(self, booster: xgb.Booster, dmatrix: xgb.DMatrix) -> np.ndarray:
+        """
+        Predicts using the booster's best_iteration boundary explicitly.
+
+        Confirmed empirically: Booster.predict() does NOT automatically limit itself
+        to best_iteration (unlike the XGBClassifier sklearn wrapper's .predict()) - by
+        default it uses every boosted round, including the extra `early_stopping_rounds`
+        of rounds trained past the best one. Passing iteration_range explicitly is
+        required to actually get the benefit of early stopping at inference time;
+        without it, early stopping only limits training time, not prediction quality.
+        """
+        best_iteration = self._resolve_best_iteration(booster)
+        return booster.predict(dmatrix, iteration_range=(0, best_iteration + 1))
+
+    def _find_best_params(
+        self,
+        X,
+        y,
+        num_classes: int,
+        scale_pos_weight: Optional[float],
+    ) -> dict:
         validation_fraction = self._resolve_validation_fraction()
         split_index = int(len(X) * (1.0 - validation_fraction))
         if split_index <= 0 or split_index >= len(X):
@@ -264,12 +363,23 @@ class XGBTrainModel(BaseModel):
         y_train, y_valid = y[:split_index], y[split_index:]
         metric, higher_is_better = self._resolve_metric_config(num_classes)
 
+        train_weight = None
+        if num_classes > 2:
+            X_train, y_train, train_weight = self._apply_sampling(X_train, y_train)
+
+        dtrain = self._make_dmatrix(X_train, y_train, sample_weight=train_weight)
+        dvalid = self._make_dmatrix(X_valid, y_valid)
+
         def objective(trial: optuna.Trial) -> float:
-            params = self._suggest_params(trial)
-            model = self.build_xgb_model(params, num_classes=num_classes)
-            self._fit_xgb_model(model, X_train, y_train, eval_set=[(X_valid, y_valid)])
-            results = model.evals_result()
-            return self._best_metric_value(model, results, "validation_0", metric)
+            suggested = self._suggest_params(trial)
+            num_boost_round = suggested["num_boost_round"]
+            params = self.build_xgb_params(
+                suggested, num_classes=num_classes, scale_pos_weight=scale_pos_weight
+            )
+            booster, evals_result = self._fit_booster(
+                params, dtrain, evals=[(dvalid, "validation")], num_boost_round=num_boost_round
+            )
+            return self._resolve_best_score(booster, evals_result, "validation", metric)
 
         sampler = optuna.samplers.TPESampler(
             seed=int(os.getenv("XGB_OPTUNA_RANDOM_STATE", "44"))
@@ -318,11 +428,15 @@ class XGBTrainModel(BaseModel):
                 X = transform_fe(X, self.feature_transformer)
 
             y_true = self._to_class_ids(batch_y)
-            y_pred = np.asarray(self.xgb_model.predict(X))
-            if y_pred.ndim > 1:
-                y_pred = np.argmax(y_pred, axis=-1)
+            dmatrix = self._make_dmatrix(X)
+            y_proba = np.asarray(self._predict_proba(self.xgb_model, dmatrix))
+
+            if y_proba.ndim > 1 and y_proba.shape[-1] > 1:
+                # multi:softprob -> (n, num_classes) probability rows
+                y_pred = np.argmax(y_proba, axis=-1)
             else:
-                y_pred = (y_pred > 0.5).astype(np.int32)  # For binary classification, threshold at 0.5
+                # binary:logistic -> (n,) probability of the positive class
+                y_pred = (y_proba > 0.5).astype(np.int32)
 
             y_pred = y_pred.astype(np.int32)
 
@@ -427,17 +541,42 @@ class XGBTrainModel(BaseModel):
           Xe = pd.DataFrame(Xe, columns=train_ds.element_spec[0].keys())
           X, Xe, self.feature_transformer = auto_expand_feature_fe(X, y, Xe, metadata=fn_args)
 
-        best_params = self._find_best_params(X, y, num_classes=num_classes) if self._optuna_enabled() else {}
-        xgb_model = self.build_xgb_model(best_params, num_classes=num_classes)
-        self._fit_xgb_model(xgb_model, X, y, eval_set=[(X, y), (Xe, ye)])
-        results = xgb_model.evals_result()
+        # scale_pos_weight (binary-only) mirrors the working reference script; for
+        # num_classes > 2 this is None and _apply_sampling's per-row sample_weight is
+        # used instead (see below).
+        scale_pos_weight = self._compute_scale_pos_weight(y) if num_classes <= 2 else None
+
+        X_fit, y_fit = X, y
+        train_weight = None
+        if num_classes > 2:
+            X_fit, y_fit, train_weight = self._apply_sampling(X, y)
+
+        best_params = (
+            self._find_best_params(X_fit, y_fit, num_classes=num_classes, scale_pos_weight=scale_pos_weight)
+            if self._optuna_enabled() else {}
+        )
+        num_boost_round = best_params.pop("num_boost_round", None) or self._resolve_num_boost_round()
+        params = self.build_xgb_params(best_params, num_classes=num_classes, scale_pos_weight=scale_pos_weight)
+
+        dtrain = self._make_dmatrix(X_fit, y_fit, sample_weight=train_weight)
+        dvalid = self._make_dmatrix(Xe, ye)
+
+        booster, evals_result = self._fit_booster(
+            params,
+            dtrain,
+            evals=[(dtrain, "train"), (dvalid, "validation")],
+            num_boost_round=num_boost_round,
+        )
+
         metric, _ = self._resolve_metric_config(num_classes)
+        best_iteration = self._resolve_best_iteration(booster)
         # NOTE: despite the attribute names (kept for backward compat with evaluate()'s
         # output dict), these now hold whatever metric is configured - aucpr by default
         # for binary, so higher is better here, not lower.
-        self.train_loss = self._best_metric_value(xgb_model, results, "validation_0", metric)
-        self.eval_loss  = self._best_metric_value(xgb_model, results, "validation_1", metric)
-        self.xgb_model = xgb_model
+        self.train_loss = float(evals_result["train"][metric][best_iteration])
+        self.eval_loss = self._resolve_best_score(booster, evals_result, "validation", metric)
+        self.best_iteration = best_iteration
+        self.xgb_model = booster
         return self.xgb_model
 
     def get_serving_signature(self):
@@ -451,9 +590,9 @@ class XGBTrainModel(BaseModel):
             "real_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="real_volume"),
             "tick_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="tick_volume"),
         }
- 
+
         @tf.function(input_signature=[input_signature])
         def serve(examples):
             return {"output": self.model(examples)}
- 
+
         return serve
