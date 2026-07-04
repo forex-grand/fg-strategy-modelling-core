@@ -105,9 +105,27 @@ class XGBTrainModel(BaseModel):
         return np.reshape(y_np, (-1,)).astype(np.int32)
 
     @staticmethod
-    def _eval_metric_key(num_classes: int) -> str:
-        """Metric key used to read validation loss out of evals_result()."""
-        return "logloss" if num_classes <= 2 else "mlogloss"
+    def _resolve_metric_config(num_classes: int) -> tuple[str, bool]:
+        """
+        Returns (eval_metric, higher_is_better).
+
+        Binary defaults to aucpr rather than logloss. logloss rewards well-calibrated
+        probabilities across the *whole* distribution, which under class imbalance is
+        dominated by the majority class - a model can have great logloss while having
+        mediocre precision on the minority (buy/sell) classes you actually care about.
+        aucpr (area under the precision-recall curve) tracks the precision/recall
+        trade-off directly and is the standard XGBoost metric for imbalanced binary
+        classification. Override via XGB_EVAL_METRIC if you want logloss/auc/etc back.
+        """
+        override = os.getenv("XGB_EVAL_METRIC", "").strip().lower()
+        if num_classes <= 2:
+            metric = override or "aucpr"
+        else:
+            # aucpr's multi-class support is inconsistent across xgboost versions;
+            # stick with mlogloss for >2 classes unless explicitly overridden.
+            metric = override or "mlogloss"
+        higher_is_better = metric in {"aucpr", "auc", "map", "ndcg"}
+        return metric, higher_is_better
 
     @staticmethod
     def _best_metric_value(model, results: dict, dataset_key: str, metric_key: str) -> float:
@@ -115,7 +133,7 @@ class XGBTrainModel(BaseModel):
         Reads the metric value at the model's best_iteration rather than the last
         boosting round. With early stopping enabled, the last round is frequently
         *not* the best one (that's the point of early stopping) - indexing with [-1]
-        silently reports a worse-than-actual loss and, inside the Optuna objective,
+        silently reports a worse-than-actual score and, inside the Optuna objective,
         can steer the search toward configs that merely plateau nicely rather than
         configs that generalize best.
         """
@@ -145,14 +163,15 @@ class XGBTrainModel(BaseModel):
         """
         params = dict(params or {})
         common = dict(_COMMON)
+        metric, _ = self._resolve_metric_config(num_classes)
 
         if num_classes <= 2:
             common["objective"] = "binary:logistic"
-            common["eval_metric"] = "logloss"
+            common["eval_metric"] = metric
             common.pop("num_class", None)
         else:
             common["objective"] = "multi:softprob"
-            common["eval_metric"] = "mlogloss"
+            common["eval_metric"] = metric
             common["num_class"] = num_classes
 
         early_stopping_rounds = self._resolve_early_stopping_rounds()
@@ -242,19 +261,22 @@ class XGBTrainModel(BaseModel):
 
         X_train, X_valid = X[:split_index], X[split_index:]
         y_train, y_valid = y[:split_index], y[split_index:]
-        metric_key = self._eval_metric_key(num_classes)
+        metric, higher_is_better = self._resolve_metric_config(num_classes)
 
         def objective(trial: optuna.Trial) -> float:
             params = self._suggest_params(trial)
             model = self.build_xgb_model(params, num_classes=num_classes)
             self._fit_xgb_model(model, X_train, y_train, eval_set=[(X_valid, y_valid)])
             results = model.evals_result()
-            return self._best_metric_value(model, results, "validation_0", metric_key)
+            return self._best_metric_value(model, results, "validation_0", metric)
 
         sampler = optuna.samplers.TPESampler(
             seed=int(os.getenv("XGB_OPTUNA_RANDOM_STATE", "44"))
         )
-        study = optuna.create_study(direction="minimize", sampler=sampler)
+        study = optuna.create_study(
+            direction="maximize" if higher_is_better else "minimize",
+            sampler=sampler,
+        )
         timeout_value = os.getenv("XGB_OPTUNA_TIMEOUT")
         timeout = int(timeout_value) if timeout_value else None
         study.optimize(
@@ -264,7 +286,7 @@ class XGBTrainModel(BaseModel):
             show_progress_bar=False,
         )
         print("Best XGBoost Optuna params: ", study.best_params)
-        print("Best XGBoost Optuna validation loss: ", study.best_value)
+        print(f"Best XGBoost Optuna validation {metric}: ", study.best_value)
         return dict(study.best_params)
 
     def evaluate(self, eval_ds):
@@ -408,9 +430,12 @@ class XGBTrainModel(BaseModel):
         xgb_model = self.build_xgb_model(best_params, num_classes=num_classes)
         self._fit_xgb_model(xgb_model, X, y, eval_set=[(X, y), (Xe, ye)])
         results = xgb_model.evals_result()
-        metric_key = self._eval_metric_key(num_classes)
-        self.train_loss = self._best_metric_value(xgb_model, results, "validation_0", metric_key)
-        self.eval_loss  = self._best_metric_value(xgb_model, results, "validation_1", metric_key)
+        metric, _ = self._resolve_metric_config(num_classes)
+        # NOTE: despite the attribute names (kept for backward compat with evaluate()'s
+        # output dict), these now hold whatever metric is configured - aucpr by default
+        # for binary, so higher is better here, not lower.
+        self.train_loss = self._best_metric_value(xgb_model, results, "validation_0", metric)
+        self.eval_loss  = self._best_metric_value(xgb_model, results, "validation_1", metric)
         self.xgb_model = xgb_model
         return self.xgb_model
 
@@ -420,14 +445,4 @@ class XGBTrainModel(BaseModel):
             "open": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="open"),
             "high": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="high"),
             "close": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="close"),
-            "low": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="low"),
-            "spread": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="spread"),
-            "real_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="real_volume"),
-            "tick_volume": tf.TensorSpec(shape=[None, self.sequence_length], dtype=tf.float32, name="tick_volume"),
-        }
-
-        @tf.function(input_signature=[input_signature])
-        def serve(examples):
-            return {"output": self.model(examples)}
-
-        return serve
+            "low": tf.
