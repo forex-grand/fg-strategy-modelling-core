@@ -155,6 +155,26 @@ class TrainModel(BaseModel):
         return np.reshape(y, (-1,)).astype(np.int64)
 
     @staticmethod
+    def _resolve_excluded_class_id() -> int | None:
+        exclude_id = os.getenv("EXCLUDE_CLASS_ID", "-1").strip()
+        if exclude_id == "":
+            return None
+        return int(exclude_id)
+
+    @staticmethod
+    def _resolve_num_batches(dataset: tf.data.Dataset, fn_args: ModelBuildTrainArguments) -> int:
+        configured_steps = getattr(fn_args, "steps_per_epoch", None)
+        if configured_steps and configured_steps > 0:
+            return int(configured_steps)
+
+        steps_per_epoch = int(os.getenv("STEPS_PER_EPOCH", "-1"))
+        cardinality = dataset.cardinality()
+        num_batches = steps_per_epoch if steps_per_epoch > 0 else (cardinality if cardinality > 0 else 100)
+        if cardinality == -2:
+            num_batches = -1
+        return int(num_batches)
+
+    @staticmethod
     def _class_ids_to_categorical(y: np.ndarray, num_classes: int) -> np.ndarray:
         return keras.utils.to_categorical(
             y.astype(np.int64),
@@ -483,11 +503,7 @@ class TrainModel(BaseModel):
         eval_ds: tf.data.Dataset,
         fn_args: ModelBuildTrainArguments,
     ) -> keras.Model:
-        cardinality = train_ds.cardinality()
-        steps_per_epoch = int(os.getenv("STEPS_PER_EPOCH", "-1"))
-        num_batches = steps_per_epoch if steps_per_epoch > 0 else (cardinality if cardinality > 0 else 100)
-        if cardinality == -2:
-            num_batches = -1
+        num_batches = self._resolve_num_batches(train_ds, fn_args)
 
         ts = datetime.now()
         X_train, y_train_raw, feature_shapes, feature_dtypes = self._collect_dataset_as_frame(
@@ -499,6 +515,14 @@ class TrainModel(BaseModel):
 
         y_train_class = self._labels_to_class_ids(y_train_raw)
         y_eval_class = self._labels_to_class_ids(y_eval_raw)
+        exclude_id = self._resolve_excluded_class_id()
+        if exclude_id is not None:
+            train_mask = y_train_class != exclude_id
+            eval_mask = y_eval_class != exclude_id
+            X_train = X_train.loc[train_mask].reset_index(drop=True)
+            y_train_class = y_train_class[train_mask]
+            X_eval = X_eval.loc[eval_mask].reset_index(drop=True)
+            y_eval_class = y_eval_class[eval_mask]
 
         unique_classes = np.union1d(np.unique(y_train_class), np.unique(y_eval_class))
         if unique_classes.size == 0:

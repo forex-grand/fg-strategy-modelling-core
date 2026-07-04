@@ -176,6 +176,7 @@ class XGBTrainer:
                 "min_target_point": mean_target_min_value,
                 "data_start": self.data_gen.train_properties.data_start,
                 "data_end": self.data_gen.train_properties.data_end,
+                "steps_per_epoch": self.config.steps_per_epoch,
             }
             model.build_train_model(train_ds=train_ds, eval_ds=eval_ds, fn_args=fn_args)
             metric_values = model.evaluate(eval_ds)

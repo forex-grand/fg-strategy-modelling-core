@@ -116,6 +116,32 @@ class XGBTrainModel(BaseModel):
         return trials
 
     @staticmethod
+    def _optuna_enabled() -> bool:
+        return os.getenv("XGB_OPTUNA_ENABLED", "true").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    @staticmethod
+    def _resolve_num_batches(dataset: tf.data.Dataset, fn_args) -> int:
+        configured_steps = None
+        if isinstance(fn_args, dict):
+            configured_steps = fn_args.get("steps_per_epoch")
+        else:
+            configured_steps = getattr(fn_args, "steps_per_epoch", None)
+        if configured_steps and configured_steps > 0:
+            return int(configured_steps)
+
+        cardinality = dataset.cardinality()
+        steps_per_epoch = int(os.getenv("STEPS_PER_EPOCH", "-1"))
+        num_batches = steps_per_epoch if steps_per_epoch > 0 else (cardinality if cardinality > 0 else 100)
+        if cardinality == -2:
+            num_batches = -1
+        return int(num_batches)
+
+    @staticmethod
     def _resolve_validation_fraction() -> float:
         fraction = float(os.getenv("XGB_OPTUNA_VALIDATION_FRACTION", "0.2"))
         if not 0.0 < fraction < 1.0:
@@ -243,11 +269,7 @@ class XGBTrainModel(BaseModel):
         self.model = model_
         
         ###training loop
-        cardinality = train_ds.cardinality()
-        steps_per_epoch = int(os.getenv("STEPS_PER_EPOCH","-1"))
-        num_batches = steps_per_epoch if steps_per_epoch>0 else (cardinality if cardinality>0 else 100)
-        if cardinality==-2:
-            num_batches = -1
+        num_batches = self._resolve_num_batches(train_ds, fn_args)
 
         X = None
         y = None
@@ -320,7 +342,7 @@ class XGBTrainModel(BaseModel):
           Xe = pd.DataFrame(Xe, columns=train_ds.element_spec[0].keys())
           X, Xe, self.feature_transformer = auto_expand_feature_fe(X, y, Xe, metadata=fn_args)
 
-        best_params = self._find_best_params(X, y, num_classes=num_classes)
+        best_params = self._find_best_params(X, y, num_classes=num_classes) if self._optuna_enabled() else {}
         xgb_model = self.build_xgb_model(best_params)
         xgb_model.set_params(num_class=num_classes)
         self._fit_xgb_model(xgb_model, X, y, eval_set=[(X, y), (Xe, ye)])

@@ -49,6 +49,7 @@ class Trainer:
         upload_models: bool = False,
         target_percentile: int = 95,
         use_dataframe_format: bool = False,
+        preprocess_at_data_generation: bool = True,
     ) -> None:
         self.symbols: List[SymbolIn] = symbols
         self.model_types = [item.strip().lower() for item in model_types]
@@ -56,10 +57,11 @@ class Trainer:
         self.target_model_type = target_model_type
         self.config = Settings()
         self.preprocessor = preprocessor_class(sequence_length)
+        self.preprocess_at_datagen = preprocess_at_data_generation
         self.data_gen = GenerateTrainData(
             train_base_bucket=self.config.train_bucket_name, 
             eval_base_bucket=self.config.eval_bucket_name,
-            preprocess_data=True, 
+            preprocess_data=preprocess_at_data_generation,
             preprocess_layer=self.preprocessor,
             use_dataframe_format=use_dataframe_format,
             )
@@ -86,8 +88,8 @@ class Trainer:
             self.data_gen = GenerateTrainData(
               train_base_bucket=self.config.train_bucket_name, 
               eval_base_bucket=self.config.eval_bucket_name,
-              preprocess_data=True, 
-              preprocess_layer=self.preprocessor,
+              preprocess_data=self.preprocess_at_datagen,
+              preprocess_layer=preprocessor,
               use_dataframe_format=self.use_dataframe_format,
               filter_by_model=use_aux_model,
               filter_model_id=aux_model_id,
@@ -293,7 +295,8 @@ class Trainer:
         # })
 
     def preprocess(self, data, preprocess_layer: Layer):
-        # data = preprocess_layer(data, training=True)
+        if not self.preprocess_at_datagen:
+            data = preprocess_layer(data, training=True)
         target = data.pop('target')
         return data, target
     
@@ -329,13 +332,12 @@ class Trainer:
             
             if self.config.shuffle_data:
                 data = data.shuffle(self.config.shuffle_buffer_size, reshuffle_each_iteration=True)
-            
+            data = data.batch(self.config.batch_size, drop_remainder=True)
             data = data.map(
                 lambda x: self.preprocess(x, preprocess_layer=preprocessor),
                 num_parallel_calls=tf.data.AUTOTUNE
             )
             data = data.cache()
-            data = data.batch(self.config.batch_size, drop_remainder=True)
             data = data.prefetch(tf.data.AUTOTUNE)
         else:
             # Load from TFRecord format (existing logic)
@@ -351,12 +353,12 @@ class Trainer:
             data = data.map(lambda x: self.deserialize(x, preprocessor), num_parallel_calls=tf.data.AUTOTUNE)
             if self.config.shuffle_data:
                 data = data.shuffle(self.config.shuffle_buffer_size, reshuffle_each_iteration=True)
+            data = data.batch(self.config.batch_size, drop_remainder=True)
             data = data.map(
                 lambda x: self.preprocess(x, preprocess_layer=preprocessor),
                 num_parallel_calls=tf.data.AUTOTUNE
             )
             data = data.cache()
-            data = data.batch(self.config.batch_size, drop_remainder=True)
             data = data.prefetch(tf.data.AUTOTUNE)
         
         return data
