@@ -17,12 +17,12 @@ from src.pipeline.feature_selection import auto_expand_feature_fe, transform_fe
 import pandas as pd
 
 _COMMON = dict(
-    objective="multi:softprob",
+    objective="binary:logistic",
     use_label_encoder=False,
     random_state=44,
     tree_method="hist",
     device=os.getenv("XGB_DEVICE", "cpu").strip().lower(),
-    eval_metric="mlogloss",
+    eval_metric="auc",
     verbosity=0,
     n_jobs=-1,
 )
