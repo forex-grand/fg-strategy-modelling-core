@@ -47,7 +47,27 @@ class XGBTrainModel(BaseModel):
         self.num_classes = 2  # Fixed for binary
         self.class_id_map = None
         self.class_id_reverse_map = None
-
+    @staticmethod
+    def _resolve_num_batches(dataset: tf.data.Dataset, fn_args) -> int:
+        """Determine how many batches to process from the dataset."""
+        configured_steps = None
+        if isinstance(fn_args, dict):
+            configured_steps = fn_args.get("steps_per_epoch")
+        else:
+            configured_steps = getattr(fn_args, "steps_per_epoch", None)
+    
+        if configured_steps and configured_steps > 0:
+            return int(configured_steps)
+    
+        cardinality = dataset.cardinality()
+        steps_per_epoch = int(os.getenv("STEPS_PER_EPOCH", "-1"))
+    
+        num_batches = steps_per_epoch if steps_per_epoch > 0 else (cardinality if cardinality > 0 else 100)
+        if cardinality == -2:  # Unknown cardinality
+            num_batches = -1
+    
+        return int(num_batches)
+    
     @staticmethod
     def _sampling_strategy() -> str:
         return (
