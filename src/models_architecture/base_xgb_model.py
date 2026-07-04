@@ -16,13 +16,13 @@ from imblearn.under_sampling import RandomUnderSampler
 from src.pipeline.feature_selection import auto_expand_feature_fe, transform_fe
 import pandas as pd
 
+# NOTE: objective / num_class / eval_metric are now resolved dynamically based on
+# num_classes (see build_xgb_model). Do not hardcode them here.
 _COMMON = dict(
-    objective="binary:logistic",
     use_label_encoder=False,
     random_state=44,
     tree_method="hist",
     device=os.getenv("XGB_DEVICE", "cpu").strip().lower(),
-    eval_metric="auc",
     verbosity=0,
     n_jobs=-1,
 )
@@ -104,9 +104,36 @@ class XGBTrainModel(BaseModel):
             return np.argmax(y_np, axis=-1).astype(np.int32)
         return np.reshape(y_np, (-1,)).astype(np.int32)
 
-    def build_xgb_model(self, params: Optional[dict] = None):
+    @staticmethod
+    def _eval_metric_key(num_classes: int) -> str:
+        """Metric key used to read validation loss out of evals_result()."""
+        return "logloss" if num_classes <= 2 else "mlogloss"
+
+    def build_xgb_model(self, params: Optional[dict] = None, num_classes: int = 2):
+        """
+        Builds an XGBClassifier with objective/num_class/eval_metric chosen based on
+        num_classes. binary:logistic must NOT receive num_class - passing it causes
+        XGBoost to emit num_classes predictions per sample, which blows up shape
+        checks against the (single-column) labels array.
+        """
         params = dict(params or {})
-        merged_params = {**_COMMON, **params}
+        common = dict(_COMMON)
+
+        if num_classes <= 2:
+            common["objective"] = "binary:logistic"
+            common["eval_metric"] = "logloss"
+            common.pop("num_class", None)
+        else:
+            common["objective"] = "multi:softprob"
+            common["eval_metric"] = "mlogloss"
+            common["num_class"] = num_classes
+
+        merged_params = {**common, **params}
+        # Guard against a caller accidentally injecting num_class via params/best_params
+        # when we're in binary mode (e.g. stale Optuna best_params from a prior multiclass run).
+        if num_classes <= 2:
+            merged_params.pop("num_class", None)
+
         return XGBClassifier(**merged_params)
 
     def _resolve_optuna_trials(self) -> int:
@@ -182,14 +209,14 @@ class XGBTrainModel(BaseModel):
 
         X_train, X_valid = X[:split_index], X[split_index:]
         y_train, y_valid = y[:split_index], y[split_index:]
+        metric_key = self._eval_metric_key(num_classes)
 
         def objective(trial: optuna.Trial) -> float:
             params = self._suggest_params(trial)
-            model = self.build_xgb_model(params)
-            model.set_params(num_class=num_classes)
+            model = self.build_xgb_model(params, num_classes=num_classes)
             self._fit_xgb_model(model, X_train, y_train, eval_set=[(X_valid, y_valid)])
             results = model.evals_result()
-            return float(results["validation_0"]["mlogloss"][-1])
+            return float(results["validation_0"][metric_key][-1])
 
         sampler = optuna.samplers.TPESampler(
             seed=int(os.getenv("XGB_OPTUNA_RANDOM_STATE", "44"))
@@ -332,7 +359,6 @@ class XGBTrainModel(BaseModel):
             self.class_id_reverse_map = {idx: label for label, idx in class_id_map.items()}
 
         num_classes = int(len(unique_all_classes))
-        # xgb_model.set_params(num_class=num_classes)
         self.num_classes = num_classes
 
         print(f"Train data length: {X.shape[0]}, Eval data len: {Xe.shape[0]}")
@@ -346,12 +372,12 @@ class XGBTrainModel(BaseModel):
           X, Xe, self.feature_transformer = auto_expand_feature_fe(X, y, Xe, metadata=fn_args)
 
         best_params = self._find_best_params(X, y, num_classes=num_classes) if self._optuna_enabled() else {}
-        xgb_model = self.build_xgb_model(best_params)
-        xgb_model.set_params(num_class=num_classes)
+        xgb_model = self.build_xgb_model(best_params, num_classes=num_classes)
         self._fit_xgb_model(xgb_model, X, y, eval_set=[(X, y), (Xe, ye)])
         results = xgb_model.evals_result()
-        self.train_loss = results["validation_0"]["mlogloss"][-1]
-        self.eval_loss  = results["validation_1"]["mlogloss"][-1]
+        metric_key = self._eval_metric_key(num_classes)
+        self.train_loss = results["validation_0"][metric_key][-1]
+        self.eval_loss  = results["validation_1"][metric_key][-1]
         self.xgb_model = xgb_model
         return self.xgb_model
 
