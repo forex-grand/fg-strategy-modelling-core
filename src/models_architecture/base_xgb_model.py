@@ -49,7 +49,7 @@ class XGBTrainModel(BaseModel):
             os.getenv("TRAIN_DATA_SAMPLING")
             or os.getenv("SAMPLING_STRATEGY")
             or os.getenv("DATA_SAMPLING_STRATEGY")
-            or "smote_under"
+            or "weights"
         ).strip().lower().replace("-", "_")
 
     def _apply_sampling(self, X, y):
@@ -109,12 +109,39 @@ class XGBTrainModel(BaseModel):
         """Metric key used to read validation loss out of evals_result()."""
         return "logloss" if num_classes <= 2 else "mlogloss"
 
+    @staticmethod
+    def _best_metric_value(model, results: dict, dataset_key: str, metric_key: str) -> float:
+        """
+        Reads the metric value at the model's best_iteration rather than the last
+        boosting round. With early stopping enabled, the last round is frequently
+        *not* the best one (that's the point of early stopping) - indexing with [-1]
+        silently reports a worse-than-actual loss and, inside the Optuna objective,
+        can steer the search toward configs that merely plateau nicely rather than
+        configs that generalize best.
+        """
+        values = results[dataset_key][metric_key]
+        best_iteration = getattr(model, "best_iteration", None)
+        if best_iteration is not None:
+            idx = min(int(best_iteration), len(values) - 1)
+            return float(values[idx])
+        return float(values[-1])
+
+    @staticmethod
+    def _resolve_early_stopping_rounds() -> Optional[int]:
+        rounds = int(os.getenv("XGB_EARLY_STOPPING_ROUNDS", "50"))
+        return rounds if rounds > 0 else None
+
     def build_xgb_model(self, params: Optional[dict] = None, num_classes: int = 2):
         """
         Builds an XGBClassifier with objective/num_class/eval_metric chosen based on
         num_classes. binary:logistic must NOT receive num_class - passing it causes
         XGBoost to emit num_classes predictions per sample, which blows up shape
         checks against the (single-column) labels array.
+
+        early_stopping_rounds is set here (constructor) rather than in .fit(), since
+        that's where xgboost>=2.0's sklearn API expects it. Without this, n_estimators
+        values from a wide Optuna search (up to 1200) can overfit badly on a dataset
+        this size, which tanks validation precision even though training loss looks fine.
         """
         params = dict(params or {})
         common = dict(_COMMON)
@@ -127,6 +154,12 @@ class XGBTrainModel(BaseModel):
             common["objective"] = "multi:softprob"
             common["eval_metric"] = "mlogloss"
             common["num_class"] = num_classes
+
+        early_stopping_rounds = self._resolve_early_stopping_rounds()
+        if early_stopping_rounds is not None:
+            common["early_stopping_rounds"] = early_stopping_rounds
+        else:
+            common.pop("early_stopping_rounds", None)
 
         merged_params = {**common, **params}
         # Guard against a caller accidentally injecting num_class via params/best_params
@@ -216,7 +249,7 @@ class XGBTrainModel(BaseModel):
             model = self.build_xgb_model(params, num_classes=num_classes)
             self._fit_xgb_model(model, X_train, y_train, eval_set=[(X_valid, y_valid)])
             results = model.evals_result()
-            return float(results["validation_0"][metric_key][-1])
+            return self._best_metric_value(model, results, "validation_0", metric_key)
 
         sampler = optuna.samplers.TPESampler(
             seed=int(os.getenv("XGB_OPTUNA_RANDOM_STATE", "44"))
@@ -376,8 +409,8 @@ class XGBTrainModel(BaseModel):
         self._fit_xgb_model(xgb_model, X, y, eval_set=[(X, y), (Xe, ye)])
         results = xgb_model.evals_result()
         metric_key = self._eval_metric_key(num_classes)
-        self.train_loss = results["validation_0"][metric_key][-1]
-        self.eval_loss  = results["validation_1"][metric_key][-1]
+        self.train_loss = self._best_metric_value(xgb_model, results, "validation_0", metric_key)
+        self.eval_loss  = self._best_metric_value(xgb_model, results, "validation_1", metric_key)
         self.xgb_model = xgb_model
         return self.xgb_model
 
