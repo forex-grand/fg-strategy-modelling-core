@@ -236,8 +236,11 @@ class XGBTrainModel(BaseModel):
 
             y_true = self._to_class_ids(batch_y)
             y_pred = np.asarray(self.xgb_model.predict(X))
-            if y_pred.ndim > 1 and y_pred.shape[-1] > 1:
+            if y_pred.ndim > 1:
                 y_pred = np.argmax(y_pred, axis=-1)
+            else:
+                y_pred = (y_pred > 0.5).astype(np.int32)  # For binary classification, threshold at 0.5
+
             y_pred = y_pred.astype(np.int32)
 
             y_true = tf.one_hot(y_true, depth=self.num_classes)
