@@ -346,12 +346,16 @@ class XGBTrainModel(BaseModel):
         }
         return metrics
 
-    def build_train_model(self, train_ds, eval_ds, fn_args):
+    def build_preprocessing_model_obj(self, train_ds:tf.data.Dataset):
         inputs = self._build_input_signature()
         inputs_dict = {inp.name: inp for inp in inputs}
         x = self.preprocessor(inputs_dict)
         y = self.build_model(train_ds.element_spec[0])(x)
         model_ = keras.Model(inputs, y)
+        return model_
+
+    def build_train_model(self, train_ds:tf.data.Dataset, eval_ds:tf.data.Dataset, fn_args):
+        model_ = self.build_preprocessing_model_obj(train_ds)
         self.model = model_
         
         ###training loop
