@@ -242,7 +242,14 @@ class AuxilaryModelManager:
             with _OPENFE_TRANSFORM_LOCK:
               preprocessed_np = transform_fe(data, model_dict['feature_transformer'])
 
-          preds = model_dict['xgboost'].predict(preprocessed_np)
+          model = model_dict['xgboost']
+
+          best_iteration_range = None
+          try:
+            best_iteration_range = (0, model.best_iteration + 1)
+          except:
+            pass            
+          preds = model.predict(preprocessed_np, iteration_range=best_iteration_range)
           if preds.ndim==2:
               preds = np.argmax(preds, axis=1)
           return preds.tolist()
