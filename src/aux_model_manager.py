@@ -1,14 +1,13 @@
 import os
 import json
 import logging
-import tempfile
 import threading
-from datetime import datetime, UTC
+from datetime import datetime
 from pathlib import Path
 import tensorflow as tf
 import keras
-import uuid
 import zipfile
+from collections import Counter
 try:
     from openfe import OpenFE, transform
 except ModuleNotFoundError:
@@ -25,7 +24,6 @@ try:
     import joblib
 except ModuleNotFoundError:
     joblib = None
-import re
 from typing import Any
 from botocore.exceptions import ClientError
 import pandas as pd
@@ -37,6 +35,9 @@ logger = logging.getLogger(__name__)
 cpu_counts = os.cpu_count()
 _OPENFE_TRANSFORM_LOCK = threading.Lock()
 
+# Class index convention (must match EnsemblePusher and training/prediction code):
+#   0 = buy, 1 = sell, 2 = hold
+BUY, SELL, HOLD = 0, 1, 2
 
 
 def _is_transformer_bundle(feature_transformer):
@@ -77,15 +78,20 @@ def transform_fe(X, feature_transformer):
     X_transformed = pd.DataFrame(imputer.transform(X_transformed), columns=X_transformed.columns)
   return X_transformed
 
+
 class AuxilaryModelManager:
-  def __init__(self, model_id, output_path: str=None) -> None:
+  def __init__(self, model_id, output_path: str = None) -> None:
       self.config = Settings()
       self.storage_client = getStorageClient(self.config.s3_storage_option)(self.config)
       self.storage_bucket = self.config.models_bucket
       self.data_directory = Path(output_path) / 'models' if output_path is not None else Path(self.config.data_directory).expanduser().resolve() / 'models'
       self._client = self.storage_client.client
-      self.model  = self.fetch_model_from_storage(model_id=model_id)
+      self.model_id = model_id
+      self.model = self.fetch_model_from_storage(model_id=model_id)
 
+  # ------------------------------------------------------------------
+  # Storage helpers
+  # ------------------------------------------------------------------
   def download_file(self, bucket: str, key: str, dest: Path) -> None:
       dest = Path(dest)
       dest.parent.mkdir(parents=True, exist_ok=True)
@@ -94,22 +100,22 @@ class AuxilaryModelManager:
 
   def get_model_directory(self, model_id):
       return self.data_directory / model_id
-  
-  def _local_files_exist(self, parquet_path: Path) -> bool:
-      return parquet_path.exists()
-  
+
+  def _local_files_exist(self, path: Path) -> bool:
+      return path.exists()
+
   def _model_key(self, model_id: str) -> str:
       return f"prediction-models/{model_id}/model.zip"
-  
+
   def _xgb_key(self, model_id: str) -> str:
       return f"prediction-models/{model_id}/xgboost.json"
 
   def _feature_transformer_key(self, model_id: str):
-      return  f"prediction-models/{model_id}/transformer.pkl"
+      return f"prediction-models/{model_id}/transformer.pkl"
 
   def _metadata_key(self, model_id: str) -> str:
       return f"prediction-models/{model_id}/properties.json"
- 
+
   def object_exists(self, bucket: str, key: str) -> bool:
         try:
             self._client.head_object(Bucket=bucket, Key=key)
@@ -119,11 +125,21 @@ class AuxilaryModelManager:
                 return False
             raise
 
+  # ------------------------------------------------------------------
+  # Loading: dispatches to single-model or ensemble loader based on
+  # the `model_kind` field in properties.json
+  # ------------------------------------------------------------------
   def fetch_model_from_storage(self, model_id: str) -> dict[str, Any]:
       """
-      Download model + metadata from R2.
-      Returns {"model": tf.keras.Model, "metadata": dict}.
-      Raises FileNotFoundError if either object is missing.
+      Download model + metadata from storage and load it.
+
+      Returns a dict shaped either as:
+        {"kind": "single", "metadata": ..., "model": ..., ["xgboost": ...,
+         "feature_transformer": ...]}
+      or:
+        {"kind": "ensemble", "metadata": ..., "components": {model_id: {...}}}
+
+      Raises FileNotFoundError if the container/metadata objects are missing.
       """
       bucket = self.storage_bucket
       model_key = self._model_key(model_id)
@@ -133,66 +149,111 @@ class AuxilaryModelManager:
           if not self.object_exists(bucket, key):
               raise FileNotFoundError(f"Object not found in bucket: {key}")
 
-      model_dict = {}
-      
       tmp_path = self.get_model_directory(model_id=model_id)
       model_zip_path = tmp_path / "model.zip"
-      extract_path = tmp_path / "model"   # folder for extracted model
       meta_path = tmp_path / "properties.json"
 
-      # Download files
       if not self._local_files_exist(model_zip_path):
-        self.download_file(bucket, model_key, model_zip_path)
+          self.download_file(bucket, model_key, model_zip_path)
       if not self._local_files_exist(meta_path):
-        self.download_file(bucket, meta_key, str(meta_path))
-      
+          self.download_file(bucket, meta_key, str(meta_path))
+
       properties = json.loads(meta_path.read_text())
+      model_kind = properties.get("model_kind", "single")
+
+      if model_kind == "ensemble":
+          return self._load_ensemble(tmp_path, model_zip_path, properties)
+
+      return self._load_single(model_id, tmp_path, model_zip_path, meta_path, properties)
+
+  def _load_single(self, model_id, tmp_path, model_zip_path, meta_path, properties) -> dict[str, Any]:
+      model_dict: dict[str, Any] = {"kind": "single", "metadata": properties}
       model_type = properties.get("model_type", "unknown")
+      extract_path = tmp_path / "model"
 
       if "xgb" in model_type.lower():
           if XGBClassifier is None:
               raise ModuleNotFoundError("xgboost is required to load auxiliary XGBoost models.")
           xgb_path = tmp_path / "xgboost.json"
-          xgb_key = self._xgb_key(model_id)
           if not self._local_files_exist(xgb_path):
-            self.download_file(bucket, xgb_key, str(xgb_path))
-
+              self.download_file(self.storage_bucket, self._xgb_key(model_id), str(xgb_path))
           xgb_model = XGBClassifier()
           xgb_model.load_model(str(xgb_path))
           model_dict["xgboost"] = xgb_model
 
-          ftransform_path = tmp_path / "ftransformer.pkl"
-          ftransform_key  = self._feature_transformer_key(model_id)
-          ftransform_exist = self._local_files_exist(ftransform_path)
-          
-          has_feature_transformer = properties.get('has_feature_transformer', False)
-          if has_feature_transformer:
-            if joblib is None:
-              raise ModuleNotFoundError("joblib is required to load OpenFE transformer bundles.")
-            if not ftransform_exist:
-              if self.object_exists(bucket, ftransform_key):
-                  self.download_file(bucket, ftransform_key, str(ftransform_path))
-            ftransformer = joblib.load(str(ftransform_path))
-            model_dict['feature_transformer'] = ftransformer
-              
-      # Extract zip into extract_path
-      with zipfile.ZipFile(model_zip_path, "r") as zipf:
-          zipf.extractall(extract_path)
+          if properties.get('has_feature_transformer', False):
+              if joblib is None:
+                  raise ModuleNotFoundError("joblib is required to load OpenFE transformer bundles.")
+              ftransform_path = tmp_path / "ftransformer.pkl"
+              ftransform_key = self._feature_transformer_key(model_id)
+              if not self._local_files_exist(ftransform_path):
+                  if self.object_exists(self.storage_bucket, ftransform_key):
+                      self.download_file(self.storage_bucket, ftransform_key, str(ftransform_path))
+              model_dict['feature_transformer'] = joblib.load(str(ftransform_path))
 
-      # Load TensorFlow SavedModel from extracted folder
+      if not self._local_files_exist(extract_path):
+          with zipfile.ZipFile(model_zip_path, "r") as zipf:
+              zipf.extractall(extract_path)
+
       model_obj = tf.saved_model.load(str(extract_path))
-      model = model_obj.signatures['serving_default']
-      model_dict["model"] = model
-
-      with open(meta_path) as f:
-          metadata: dict = json.load(f)
-          model_dict["metadata"] = metadata
+      model_dict["model"] = model_obj.signatures['serving_default']
 
       logger.info("Loaded model '%s' from storage.", model_id)
       return model_dict
-  
-  def _ohlc_to_feature_dict(self, row_dict) -> dict[str, tf.Tensor]:
-      sequence_length = int(self.model['metadata']['sequence_length'])
+
+  def _load_ensemble(self, tmp_path, container_zip_path, properties) -> dict[str, Any]:
+      extract_root = tmp_path / "ensemble"
+      if not self._local_files_exist(extract_root):
+          with zipfile.ZipFile(container_zip_path, "r") as zf:
+              zf.extractall(extract_root)
+
+      components: dict[str, Any] = {}
+      for comp_meta in properties.get("component_models", []):
+          comp_id = comp_meta["model_id"]
+          comp_dir = extract_root / "models" / comp_id
+          comp_props_path = comp_dir / "properties.json"
+          comp_properties = (
+              json.loads(comp_props_path.read_text()) if comp_props_path.exists() else comp_meta
+          )
+
+          comp_dict: dict[str, Any] = {
+              "metadata": comp_properties,
+              "priority": comp_meta["priority"],
+          }
+
+          if "xgb" in comp_meta.get("model_type", "").lower():
+              if XGBClassifier is None:
+                  raise ModuleNotFoundError("xgboost is required to load auxiliary XGBoost models.")
+              xgb_model = XGBClassifier()
+              xgb_model.load_model(str(comp_dir / "xgboost.json"))
+              comp_dict["xgboost"] = xgb_model
+
+              if comp_meta.get("has_feature_transformer", False):
+                  if joblib is None:
+                      raise ModuleNotFoundError("joblib is required to load OpenFE transformer bundles.")
+                  comp_dict["feature_transformer"] = joblib.load(str(comp_dir / "transformer.pkl"))
+
+          comp_extract_path = comp_dir / "model"
+          if not self._local_files_exist(comp_extract_path):
+              with zipfile.ZipFile(comp_dir / "model.zip", "r") as zf:
+                  zf.extractall(comp_extract_path)
+
+          model_obj = tf.saved_model.load(str(comp_extract_path))
+          comp_dict["model"] = model_obj.signatures["serving_default"]
+
+          components[comp_id] = comp_dict
+
+      logger.info(
+          "Loaded ensemble '%s' (%d components) from storage.",
+          properties.get("symbol"), len(components),
+      )
+
+      return {"kind": "ensemble", "metadata": properties, "components": components}
+
+  # ------------------------------------------------------------------
+  # Feature prep
+  # ------------------------------------------------------------------
+  def _ohlc_to_feature_dict(self, row_dict, sequence_length: int) -> dict[str, tf.Tensor]:
       feature_dict = {}
       for key in ("time", "open", "high", "close", "low", "spread", "tick_volume", "real_volume"):
           value = row_dict[key]
@@ -210,14 +271,11 @@ class AuxilaryModelManager:
           feature_dict[key] = tensor
       return feature_dict
 
-  def prepare_data(self, data):
-      ts = datetime.now()
-      prepared = self._ohlc_to_feature_dict(data)
-      return prepared
-
+  def prepare_data(self, data, sequence_length: int):
+      return self._ohlc_to_feature_dict(data, sequence_length)
 
   # ---------------------------------------------------------------------------
-  # Inference
+  # Inference (unchanged from original single-model implementation)
   # ---------------------------------------------------------------------------
 
   def run_nn_inference(self, model: tf.keras.Model, data: dict[str, tf.Tensor]) -> list[list[float]]:
@@ -248,28 +306,105 @@ class AuxilaryModelManager:
           try:
             best_iteration_range = (0, model.best_iteration + 1)
           except:
-            pass            
+            pass
           preds = model.predict(preprocessed_np, iteration_range=best_iteration_range)
-          if preds.ndim==2:
+          if preds.ndim == 2:
               preds = np.argmax(preds, axis=1)
           return preds.tolist()
       except Exception as e:
           raise ValueError(f"Value Error: {str(e)}")
 
-  
+  # ------------------------------------------------------------------
+  # Predict: dispatches to single-model or ensemble voting logic
+  # ------------------------------------------------------------------
   def predict(self, data):
-      model = self.model
-      if not model:
+      if not self.model:
           self.model = self.fetch_model_from_storage(self.model_id)
           if not self.model:
               raise ValueError(f"Error encountered loading model: {self.model_id}")
-          model = self.model
-      data = self.prepare_data(data)
+
+      model = self.model
+      if model["kind"] == "ensemble":
+          return self._predict_ensemble(model, data)
+      return self._predict_single(model, data)
+
+  def _predict_single(self, model, data):
+      seq_len = int(model["metadata"].get("sequence_length", 0))
+      prepared = self.prepare_data(data, seq_len)
       model_type = model["metadata"].get("model_type", "none")
       if "xgb" in model_type.lower():
-          preds = self.run_xgboost_inference(model, data)
-      else:
-          preds = self.run_nn_inference(model["model"], data)
-      
-      return preds
+          return self.run_xgboost_inference(model, prepared)
+      return self.run_nn_inference(model["model"], prepared)
 
+  def _predict_ensemble(self, model, data):
+      """
+      Runs every component model over `data`, then resolves a vote per row.
+
+      Returns a list of resolved class predictions, one per input row
+      (length 1 in -> length 1 out, same shape contract as single-model
+      predict()).
+      """
+      ensemble_meta = model["metadata"]
+      confirmation_type = ensemble_meta.get("confirmation_type", "majority")
+
+      # {comp_id: [pred_row0, pred_row1, ...]}
+      component_predictions: dict[str, list[int]] = {}
+      component_priority: dict[str, int] = {}
+
+      for comp_id, comp in model["components"].items():
+          seq_len = int(comp["metadata"].get("sequence_length", 0))
+          prepared = self.prepare_data(data, seq_len)
+
+          if "xgb" in comp["metadata"].get("model_type", "").lower():
+              preds = self.run_xgboost_inference(comp, prepared)
+          else:
+              preds = self.run_nn_inference(comp["model"], prepared)
+
+          preds = preds if isinstance(preds, list) else [preds]
+          component_predictions[comp_id] = [int(p) for p in preds]
+          component_priority[comp_id] = comp["priority"]
+
+      row_counts = {len(v) for v in component_predictions.values()}
+      if len(row_counts) > 1:
+          raise ValueError(
+              f"Ensemble components produced mismatched row counts: "
+              f"{ {cid: len(v) for cid, v in component_predictions.items()} }"
+          )
+      n_rows = row_counts.pop() if row_counts else 0
+
+      results = []
+      for row_idx in range(n_rows):
+          row_votes = {
+              comp_id: {
+                  "prediction": component_predictions[comp_id][row_idx],
+                  "priority": component_priority[comp_id],
+              }
+              for comp_id in component_predictions
+          }
+          results.append(self._resolve_ensemble_vote(row_votes, confirmation_type))
+
+      return results
+
+  @staticmethod
+  def _resolve_ensemble_vote(votes: dict, confirmation_type: str):
+      predictions = [v["prediction"] for v in votes.values()]
+
+      if not predictions:
+          return HOLD
+
+      if confirmation_type == "unanimous":
+          return predictions[0] if len(set(predictions)) == 1 else HOLD
+
+      counts = Counter(predictions)
+      top_count = max(counts.values())
+      tied = [p for p, c in counts.items() if c == top_count]
+
+      if len(tied) == 1:
+          return tied[0]
+
+      if confirmation_type == "priority_tiebreak":
+          for _, v in sorted(votes.items(), key=lambda kv: kv[1]["priority"]):
+              if v["prediction"] in tied:
+                  return v["prediction"]
+
+      return HOLD  # majority with unresolved tie and no priority rule -> safe default
