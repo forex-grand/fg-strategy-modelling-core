@@ -127,6 +127,8 @@ class EnsemblePusher:
         confirmation_type: str,
         priority_order: list[str],
         enforce_symbol_match: bool = True,
+        filter_model_id: str | None = None,
+        filter_class: int | None = None,
     ) -> dict[str, Any]:
         seq_lengths = [int(c["properties"].get("sequence_length", 0)) for c in components]
         max_seq_length = max(seq_lengths) if seq_lengths else 0
@@ -185,6 +187,8 @@ class EnsemblePusher:
             "trained_at": datetime.now(UTC).strftime("%Y%m%d_%H%M%S"),
             "component_models": component_entries,
             "metrics": avg_metrics,
+            "filter_model_id": filter_model_id,
+            "filter_class": filter_class,
         }
 
     def _package_container(self, components: list[dict[str, Any]], output_zip_path: Path) -> None:
@@ -210,15 +214,17 @@ class EnsemblePusher:
         confirmation_type: str = "majority",
         priority_order: list[str] | None = None,
         enforce_symbol_match: bool = True,
+        filter_model_id: str | None = None,
+        filter_class: int | None = None,
     ) -> str:
         """Bundle several already-pushed models into one ensemble artifact.
 
         Args:
             model_ids: ids of previously-pushed models (single-model artifacts)
                 to include in the ensemble.
-            signal_type: "both" | "buy_only" | "sell_only".
-                buy_only zeroes out sell metrics and drops sell votes at
-                prediction time; sell_only does the opposite.
+            signal_type: "both" | "buy_only" | "sell_only". Recorded in
+                metadata for downstream consumers; not applied by the
+                ensemble's own voting logic.
             confirmation_type: "majority" | "unanimous" | "priority_tiebreak".
                 Controls how per-model votes are resolved into one signal.
             priority_order: ids in most-trusted-first order, used to break
@@ -227,6 +233,12 @@ class EnsemblePusher:
             enforce_symbol_match: if True (default), raises when component
                 models span different symbols. Set False to allow
                 cross-symbol ensembles (logs a warning instead).
+            filter_model_id / filter_class: optional pair identifying another
+                already-pushed model that acts as a data-point filter ahead
+                of this ensemble. If either is given, both must be given.
+                When set, AuxilaryModelManager runs the filter model first
+                and overrides any row where its prediction != filter_class
+                to a HOLD prediction.
 
         Returns:
             The new ensemble's model_id (uuid string), usable anywhere a
@@ -238,6 +250,10 @@ class EnsemblePusher:
             raise ValueError(f"signal_type must be one of {_VALID_SIGNAL_TYPES}")
         if confirmation_type not in _VALID_CONFIRMATION_TYPES:
             raise ValueError(f"confirmation_type must be one of {_VALID_CONFIRMATION_TYPES}")
+        if (filter_model_id is None) != (filter_class is None):
+            raise ValueError(
+                "filter_model_id and filter_class must be provided together."
+            )
 
         priorities = priority_order or list(model_ids)
         if set(priorities) != set(model_ids):
@@ -257,6 +273,8 @@ class EnsemblePusher:
                 confirmation_type=confirmation_type,
                 priority_order=priorities,
                 enforce_symbol_match=enforce_symbol_match,
+                filter_model_id=filter_model_id,
+                filter_class=filter_class,
             )
             metadata_path = workdir / "properties.json"
             metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")

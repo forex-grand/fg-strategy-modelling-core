@@ -162,9 +162,20 @@ class AuxilaryModelManager:
       model_kind = properties.get("model_kind", "single")
 
       if model_kind == "ensemble":
-          return self._load_ensemble(tmp_path, model_zip_path, properties)
+          result = self._load_ensemble(tmp_path, model_zip_path, properties)
+      else:
+          result = self._load_single(model_id, tmp_path, model_zip_path, meta_path, properties)
 
-      return self._load_single(model_id, tmp_path, model_zip_path, meta_path, properties)
+      filter_model_id = properties.get("filter_model_id")
+      if filter_model_id:
+          result["filter_model_id"] = filter_model_id
+          result["filter_class"] = properties.get("filter_class")
+          # Filter models are themselves regular pushed models (single or
+          # ensemble); reuse the same loader recursively so they get the
+          # exact same load path, including their own filter if any.
+          result["filter_model"] = self.fetch_model_from_storage(filter_model_id)
+
+      return result
 
   def _load_single(self, model_id, tmp_path, model_zip_path, meta_path, properties) -> dict[str, Any]:
       model_dict: dict[str, Any] = {"kind": "single", "metadata": properties}
@@ -324,9 +335,44 @@ class AuxilaryModelManager:
               raise ValueError(f"Error encountered loading model: {self.model_id}")
 
       model = self.model
+
       if model["kind"] == "ensemble":
-          return self._predict_ensemble(model, data)
-      return self._predict_single(model, data)
+          predictions = self._predict_ensemble(model, data)
+      else:
+          predictions = self._predict_single(model, data)
+
+      if model.get("filter_model") is not None:
+          predictions = self._apply_filter(model, data, predictions)
+
+      return predictions
+
+  def _apply_filter(self, model, data, predictions):
+      """
+      Runs this model's filter model on `data` first, then overrides any
+      row where the filter's prediction doesn't match filter_class to HOLD,
+      leaving matching rows' original predictions untouched.
+      """
+      filter_model = model["filter_model"]
+      filter_class = model.get("filter_class")
+
+      if filter_model["kind"] == "ensemble":
+          filter_preds = self._predict_ensemble(filter_model, data)
+      else:
+          filter_preds = self._predict_single(filter_model, data)
+
+      filter_preds = filter_preds if isinstance(filter_preds, list) else [filter_preds]
+      predictions = predictions if isinstance(predictions, list) else [predictions]
+
+      if len(filter_preds) != len(predictions):
+          raise ValueError(
+              f"Filter model produced {len(filter_preds)} predictions but the "
+              f"main model produced {len(predictions)}; row counts must match."
+          )
+
+      return [
+          pred if int(fp) == filter_class else HOLD
+          for fp, pred in zip(filter_preds, predictions)
+      ]
 
   def _predict_single(self, model, data):
       seq_len = int(model["metadata"].get("sequence_length", 0))

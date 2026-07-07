@@ -40,9 +40,24 @@ class ModelPusher:
         sequence_length: int,
         data_range: dict[str, str],
         benchmark_passed: bool,
-        features_keys: list = []
+        features_keys: list = [],
+        filter_model_id: str | None = None,
+        filter_class: int | None = None,
     ) -> str:
-        """Save tf.saved_model and metadata, then upload to target GCS path."""
+        """Save tf.saved_model and metadata, then upload to target GCS path.
+
+        filter_model_id / filter_class: optional pair identifying another
+        already-pushed model that acts as a data-point filter ahead of this
+        model. If either is given, both must be given. When set, any row
+        where the filter model's prediction != filter_class will be
+        overridden to a HOLD prediction downstream (handled by
+        AuxilaryModelManager, not here).
+        """
+        if (filter_model_id is None) != (filter_class is None):
+            raise ValueError(
+                "filter_model_id and filter_class must be provided together."
+            )
+
         trained_at = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         unique_identifier = uuid.uuid4()
         model_object_key = f"prediction-models/{unique_identifier}/model.zip"
@@ -83,6 +98,8 @@ class ModelPusher:
                 },
                 "data_range": data_range,
                 "benchmark_passed": bool(benchmark_passed),
+                "filter_model_id": filter_model_id,
+                "filter_class": filter_class,
             }
             metadata_path = local_root / "metadata.json"
             metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
@@ -124,4 +141,3 @@ class ModelPusher:
 
         LOGGER.info("Model pushed to %s", model_object_key)
         return unique_identifier
-
