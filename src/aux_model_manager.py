@@ -289,7 +289,7 @@ class AuxilaryModelManager:
   # Inference (unchanged from original single-model implementation)
   # ---------------------------------------------------------------------------
 
-  def run_nn_inference(self, model: tf.keras.Model, data: dict[str, tf.Tensor]) -> list[list[float]]:
+  def run_nn_inference(self, model: tf.keras.Model, data: dict[str, tf.Tensor], model_dict: dict = None) -> list[list[float]]:
       """
       Run saved-model inference on a feature dictionary.
       Returns a list of per-row prediction lists.
@@ -299,8 +299,12 @@ class AuxilaryModelManager:
       if preds_np.ndim == 1:
           preds_np = preds_np.reshape(-1,)
 
-      return preds_np.tolist()
+      predictions = preds_np.tolist()
 
+      if model_dict.get("filter_model") is not None:
+          predictions = self._apply_filter(model_dict, data, predictions)      
+
+      return predictions
   def run_xgboost_inference(self, model_dict: dict, data: dict[str, tf.Tensor]) -> list[float]:
       try:
           preprocessed = model_dict['model'](**data)['output']
@@ -321,7 +325,12 @@ class AuxilaryModelManager:
           preds = model.predict(preprocessed_np, iteration_range=best_iteration_range)
           if preds.ndim == 2:
               preds = np.argmax(preds, axis=1)
-          return preds.tolist()
+          predictions = preds.tolist()    
+
+          if model_dict.get("filter_model") is not None:
+            predictions = self._apply_filter(model_dict, data, predictions)
+
+          return predictions
       except Exception as e:
           raise ValueError(f"Value Error: {str(e)}")
 
@@ -380,7 +389,9 @@ class AuxilaryModelManager:
       model_type = model["metadata"].get("model_type", "none")
       if "xgb" in model_type.lower():
           return self.run_xgboost_inference(model, prepared)
-      return self.run_nn_inference(model["model"], prepared)
+    
+      
+      return self.run_nn_inference(model["model"], prepared, model)
 
   def _predict_ensemble(self, model, data):
       """
@@ -404,7 +415,7 @@ class AuxilaryModelManager:
           if "xgb" in comp["metadata"].get("model_type", "").lower():
               preds = self.run_xgboost_inference(comp, prepared)
           else:
-              preds = self.run_nn_inference(comp["model"], prepared)
+              preds = self.run_nn_inference(comp["model"], prepared, comp)
 
           preds = preds if isinstance(preds, list) else [preds]
           component_predictions[comp_id] = [int(p) for p in preds]
