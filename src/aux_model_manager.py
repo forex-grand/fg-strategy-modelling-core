@@ -88,6 +88,7 @@ class AuxilaryModelManager:
       self._client = self.storage_client.client
       self.model_id = model_id
       self.model = self.fetch_model_from_storage(model_id=model_id)
+      self.model_obj = None
 
   # ------------------------------------------------------------------
   # Storage helpers
@@ -207,8 +208,9 @@ class AuxilaryModelManager:
               zipf.extractall(extract_path)
 
       model_obj = tf.saved_model.load(str(extract_path))
+      self.model_obj = model_obj
       model_dict["model"] = model_obj.signatures['serving_default']
-
+      
       logger.info("Loaded model '%s' from storage.", model_id)
       return model_dict
 
