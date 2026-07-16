@@ -208,7 +208,7 @@ class AuxilaryModelManager:
               zipf.extractall(extract_path)
 
       model_obj = tf.saved_model.load(str(extract_path))
-      self.model_obj = model_obj
+      model_dict["_model_root"] = model_obj
       model_dict["model"] = model_obj.signatures['serving_default']
       
       logger.info("Loaded model '%s' from storage.", model_id)
