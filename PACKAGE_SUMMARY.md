@@ -72,12 +72,12 @@ The repository has been successfully transformed into a professional, production
 
 **Immediately Available:**
 ```python
-from src import Settings, DataManager, tf_ma, tf_atr, tf_rsi, ...
+from forexgrand_core import Settings, DataManager, tf_ma, tf_atr, tf_rsi, ...
 ```
 
 **Lazy-loaded (on demand):**
 ```python
-from src import run_training, Trainer, GenerateTrainData, Evaluator
+from forexgrand_core import run_training, Trainer, GenerateTrainData, Evaluator
 ```
 
 #### Subpackage Exports
@@ -155,7 +155,7 @@ def tf_bollinger_bands(
 
 **On Import:**
 ```python
-from src import Settings  # Automatically validates environment
+from forexgrand_core import Settings  # Automatically validates environment
 
 # Raises helpful error if DATA_SOURCE not set:
 # EnvironmentError: Environment validation failed:
@@ -212,7 +212,7 @@ pydantic>=2.0.0,<3.0.0
 2. **Test**:
    ```bash
    pip install dist/*.whl
-   python -c "from src import Settings; print('OK')"
+   python -c "from forexgrand_core import Settings; print('OK')"
    ```
 
 3. **Upload**:
@@ -297,7 +297,7 @@ pip install fg-strategy-modelling-core
 
 ```python
 # Import with automatic validation
-from src import Settings, DataManager, tf_ma, tf_atr
+from forexgrand_core import Settings, DataManager, tf_ma, tf_atr
 
 # Load data
 manager = DataManager(base_bucket_name="forexgrand-train")
@@ -308,7 +308,7 @@ df['MA_20'] = tf_ma(df, period=20, column='close')
 df['ATR_14'] = tf_atr(df, period=14)
 
 # Train models
-from src.main import run_training
+from forexgrand_core.main import run_training
 
 results = run_training(
     symbols=['EURUSD', 'GBPUSD'],

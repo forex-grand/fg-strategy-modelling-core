@@ -12,7 +12,7 @@ os.environ.setdefault("EVAL_BUCKET_NAME", "eval")
 import numpy as np
 import tensorflow as tf
 
-from src.aux_model_manager import AuxilaryModelManager
+from forexgrand_core.aux_model_manager import AuxilaryModelManager
 
 
 class DummyManager(AuxilaryModelManager):

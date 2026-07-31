@@ -53,7 +53,7 @@ This document describes all the changes made to transform the repository into a 
 
 **Usage:**
 ```python
-from src.env_validator import validate_environment_on_import
+from forexgrand_core.env_validator import validate_environment_on_import
 validate_environment_on_import()  # Raises EnvironmentError if config missing
 ```
 
@@ -144,7 +144,7 @@ def tf_ma(df: pd.DataFrame, period: int = 12, column: str = "close") -> pd.Serie
 # Update version in pyproject.toml
 # Update CHANGELOG or version history in README.md
 # Ensure all tests pass
-pytest --cov=src tests/
+pytest --cov=forexgrand_core tests/
 ```
 
 ### Step 2: Build Distribution Packages
@@ -168,7 +168,7 @@ python -m build
 pip install dist/fg_strategy_modelling_core-0.1.0-py3-none-any.whl
 
 # Test imports
-python -c "from src import Settings, DataManager; print('OK')"
+python -c "from forexgrand_core import Settings, DataManager; print('OK')"
 ```
 
 ### Step 4: Upload to PyPI
@@ -201,7 +201,7 @@ pip install fg-strategy-modelling-core
 pip install fg-strategy-modelling-core
 
 # Test it works
-python -c "from src import Settings; print('Installed successfully')"
+python -c "from forexgrand_core import Settings; print('Installed successfully')"
 ```
 
 ## Package Information

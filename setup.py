@@ -3,6 +3,6 @@
 from setuptools import setup, find_packages
 
 setup(
-    packages=find_packages(include=["src", "src.*"]),
+    packages=find_packages(include=["forexgrand_core", "forexgrand_core.*"]),
     package_dir={"": "."},
 )

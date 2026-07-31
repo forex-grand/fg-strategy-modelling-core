@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "ForexGrand strategy modelling core library for ML model training on forex data"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "ForexGrand Team", email = "dev@forexgrand.com"}
 ]
@@ -25,7 +25,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Financial and Insurance Industry",
-    "License :: OSI Approved :: MIT License",
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
@@ -80,10 +79,7 @@ Documentation = "https://fg-strategy-modelling-core.readthedocs.io"
 "Bug Tracker" = "https://github.com/forexgrand/fg-strategy-modelling-core/issues"
 
 [tool.setuptools]
-packages = ["src"]
-
-[tool.setuptools.package-dir]
-src = "src"
+packages = {find = {include = ["forexgrand_core", "forexgrand_core.*"]}}
 
 [tool.black]
 line-length = 100
@@ -128,10 +124,10 @@ warn_no_return = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
-addopts = "-v --cov=src --cov-report=html --cov-report=term-missing"
+addopts = "-v --cov=forexgrand_core --cov-report=html --cov-report=term-missing"
 
 [tool.coverage.run]
-source = ["src"]
+source = ["forexgrand_core"]
 omit = [
     "*/tests/*",
     "*/test_*.py",

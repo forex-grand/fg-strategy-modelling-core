@@ -62,7 +62,7 @@ cp .env.example .env
 ### Access Market Data
 
 ```python
-from src.data_manager import DataManager
+from forexgrand_core.data_manager import DataManager
 
 # Initialize data manager
 manager = DataManager(base_bucket_name="forexgrand-train")
@@ -81,7 +81,7 @@ print(df.head())
 ### Compute Technical Indicators
 
 ```python
-from src.indicators import tf_ma, tf_atr, tf_rsi
+from forexgrand_core.indicators import tf_ma, tf_atr, tf_rsi
 
 # Add indicators to your DataFrame
 df['MA_20'] = tf_ma(df, period=20, column='close')
@@ -95,7 +95,7 @@ print(df[['close', 'MA_20', 'ATR_14', 'RSI_14']].head(20))
 ### Train Models
 
 ```python
-from src.main import run_training
+from forexgrand_core.main import run_training
 
 # Train models
 results = run_training(
@@ -119,7 +119,7 @@ All indicators work with pandas DataFrames containing OHLCV data.
 ### Basic Indicators
 
 ```python
-from src import indicators
+from forexgrand_core import indicators
 
 # Moving Average
 ma = indicators.tf_ma(df, period=20, column='close')
@@ -247,7 +247,7 @@ export S3_STORAGE_OPTION="minio"
 
 Check your storage credentials:
 ```python
-from src.settings import Settings
+from forexgrand_core.settings import Settings
 s = Settings()
 print(f"Endpoint: {s.s3_endpoint}")
 print(f"Bucket: {s.s3_bucket_name}")
@@ -259,7 +259,7 @@ print(f"Region: {s.s3_region_name}")
 Ensure package is installed and in Python path:
 ```bash
 pip install -e .  # Install in development mode
-python -c "import src; print(src.__version__)"
+python -c "import src; print(forexgrand_core.__version__)"
 ```
 
 ## 7. Next Steps
@@ -275,7 +275,7 @@ python -c "import src; print(src.__version__)"
 ### Load Multiple Symbols
 
 ```python
-from src.data_manager import DataManager
+from forexgrand_core.data_manager import DataManager
 
 manager = DataManager()
 
@@ -291,7 +291,7 @@ for symbol in symbols:
 ### Create Custom Preprocessing
 
 ```python
-from src.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
 
 class CustomPreprocessor(PreprocessBase):
     def process(self, df):
@@ -299,7 +299,7 @@ class CustomPreprocessor(PreprocessBase):
         df['custom_feature'] = df['high'] - df['low']
         return df
 
-from src.main import run_training
+from forexgrand_core.main import run_training
 
 results = run_training(
     symbols=['EURUSD'],
@@ -311,7 +311,7 @@ results = run_training(
 ### Batch Process Multiple Symbols
 
 ```python
-from src.main import run_training
+from forexgrand_core.main import run_training
 
 symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'EURJPY']
 models = ['conservative', 'simple']

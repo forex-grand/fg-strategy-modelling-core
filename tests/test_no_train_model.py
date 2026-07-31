@@ -12,8 +12,8 @@ os.environ.setdefault("EVAL_BUCKET_NAME", "eval")
 import numpy as np
 import tensorflow as tf
 
-from src.models_architecture.no_train_model import NoTrainModel
-from src.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from forexgrand_core.models_architecture.no_train_model import NoTrainModel
+from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
 
 
 class DummyPreprocessor(PreprocessBase):
