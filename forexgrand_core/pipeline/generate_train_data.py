@@ -102,6 +102,7 @@ class GenerateTrainData:
         target_model: TARGET_MODEL_TYPES = None,
         use_dataframe_format: bool | None = None,
         split: str = "train",
+        source: Optional[str] = None,
     ) -> Path:
         self.sequence_length = sequence_length
         self.stride = stride
@@ -116,8 +117,8 @@ class GenerateTrainData:
         if not group_name:
             raise ValueError("instrument_group is required.")
 
-        bucket_manager = self._build_data_manager(bucket_name)
-        _raw_frame, self.train_properties = bucket_manager.load_data(pair_name, group_name)
+        self.train_data_manager = self._build_data_manager(bucket_name, source=source)
+        _raw_frame, self.train_properties = self.train_data_manager.load_data(pair_name, group_name)
         metadata = self._build_metadata(
             symbol_pair=pair_name, instrument_group=group_name,
             train_df=_raw_frame, eval_df=_raw_frame, target_type=target_model,
@@ -160,6 +161,7 @@ class GenerateTrainData:
         hot_reload: bool = False,
         target_model: TARGET_MODEL_TYPES = None,
         use_dataframe_format: bool | None = None,
+        source: Optional[str] = None,
     ) -> tuple[Path, Path]:
         self.sequence_length = sequence_length
         self.stride = stride
@@ -174,6 +176,10 @@ class GenerateTrainData:
             raise ValueError("symbol_pair is required.")
         if not group_name:
             raise ValueError("instrument_group is required.")
+
+        if source is not None:
+            self.train_data_manager = self._build_data_manager(self.train_base_bucket, source=source)
+            self.eval_data_manager = self._build_data_manager(self.eval_base_bucket, source=source)
 
         train_raw_frame, self.train_properties = self.train_data_manager.load_data(pair_name, group_name)
         eval_raw_frame, self.eval_properties = self.eval_data_manager.load_data(pair_name, group_name)
@@ -486,8 +492,8 @@ class GenerateTrainData:
     #  Helpers                                                            #
     # ------------------------------------------------------------------ #
 
-    def _build_data_manager(self, base_bucket_name: str) -> DataManager:
-        return DataManager(base_bucket_name=base_bucket_name)
+    def _build_data_manager(self, base_bucket_name: str, source: Optional[str] = None) -> DataManager:
+        return DataManager(base_bucket_name=base_bucket_name, source=source)
 
     def _prepare_feature_frame(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         normalized_frame = self._prepare_dataframe(dataframe)

@@ -53,20 +53,6 @@ class DataManager:
         "spread",
     }
 
-    def __init__(
-        self,
-        base_bucket_name: Optional[str] = None,
-    ) -> None:
-        """Initialize DataManager with configuration.
-        
-        Args:
-            base_bucket_name: Optional bucket name override. If not provided, 
-                uses S3_BUCKET_NAME from environment (default: 'forexgrand').
-                
-        Raises:
-            ValueError: If DATA_SOURCE environment variable is not set or S3_STORAGE_OPTION
-                is not supported.
-        """
     REQUIRED_COLUMNS = {
         "time",
         "open",
@@ -81,9 +67,10 @@ class DataManager:
     def __init__(
         self,
         base_bucket_name: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> None:
         self.settings = Settings()
-        self.data_source = (self.settings.data_source or "").strip()
+        self.data_source = (source or self.settings.data_source or "").strip()
         if not self.data_source:
             raise ValueError("No data source found in environment variables.")
         

@@ -1,6 +1,6 @@
 # ForexGrand Strategy Modelling Core
 
-ForexGrand Strategy Modelling Core is a Python package for building forex strategy modelling workflows. It includes utilities for loading market data from Cloudflare R2, generating technical indicators, preparing TFRecord datasets, training models, evaluating model quality, and packaging trained models for deployment.
+ForexGrand Strategy Modelling Core is a Python package for building forex strategy modelling workflows. It includes utilities for loading market data from Cloudflare R2, preparing TFRecord datasets, training models, evaluating model quality, and packaging trained models for deployment.
 
 The distribution name is `fg-strategy-modelling-core`; the Python import package is `forexgrand_core`.
 
@@ -9,7 +9,6 @@ The distribution name is `fg-strategy-modelling-core`; the Python import package
 - Cloudflare R2-backed storage access through the S3-compatible API.
 - A runtime configuration helper so users do not have to manually export environment variables.
 - Data loading and local caching for symbol market data.
-- TensorFlow-based technical indicators for feature engineering.
 - Dataset generation utilities for train, evaluation, and test workflows.
 - Training pipelines for neural-network, KNN, XGBoost, and no-train target models.
 - Model evaluation, performance checks, and model publishing helpers.
@@ -30,6 +29,22 @@ git clone https://github.com/forexgrand/fg-strategy-modelling-core.git
 cd fg-strategy-modelling-core
 pip install -e ".[dev]"
 ```
+
+## Command Line Interface
+
+Installing the package provides an `fg_core` command with data workflow subcommands:
+
+```bash
+fg_core download_data EURUSD forex --bucket forexgrand-data --source mt5
+fg_core generate_train_data EURUSD forex --sequence-length 2800 --stride 100
+fg_core preprocess_data prices.parquet preprocess.py --output data/processed.pkl.gz
+```
+
+`preprocess.py` must define `preprocess_fn(dataframe)`. The input can be CSV, Parquet,
+or a pickle file, and the preprocessing result is saved as a gzip-compressed pickle.
+Each command prints a JSON object containing its output path and summary information.
+Storage credentials and other runtime settings use the same environment variables as
+the Python API.
 
 ## Configure Cloudflare R2
 
@@ -89,66 +104,50 @@ df, properties = manager.load_data(
 )
 ```
 
-## Use Technical Indicators
+## Generate Training Data
 
 ```python
-from forexgrand_core.indicators import tf_atr, tf_ma, tf_rsi
-
-df["MA_20"] = tf_ma(df, period=20, column="close")
-df["ATR_14"] = tf_atr(df, period=14)
-df["RSI_14"] = tf_rsi(df, period=14, column="close")
-```
-
-Available indicators include moving average, slope, ATR, RSI, standard deviation, Bollinger Bands, Garman-Klass volatility, wick-to-range ratio, and normalization helpers.
-
-## Train Models
-
-```python
+import tensorflow as tf
 from forexgrand_core import configure_r2
-from forexgrand_core.main import run_training
-from forexgrand_core.pipeline.preprocessing.example_preprocessor import ExamplePreprocessor
+from forexgrand_core.pipeline.no_train_trainer import NoTrainTrainer
+from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from forexgrand_core.schemas import SymbolIn, TimeBasedTarget
+
+
+class Preprocess(PreprocessBase):
+    def preprocess(self, data, training=False):
+        return {"direction": tf.zeros(tf.shape(data["close"])[0], dtype=tf.int64)}
+
+    def features_metadata(self):
+        return {"direction": tf.io.FixedLenFeature([], tf.int64)}
 
 configure_r2(
     account_id="your-cloudflare-account-id",
     access_key_id="your-r2-access-key-id",
     secret_access_key="your-r2-secret-access-key",
     bucket_name="forexgrand-data",
-    model_upload_bucket="forexgrand-models",
 )
 
-results = run_training(
-    symbols=["EURUSD", "GBPUSD", "USDJPY"],
-    model_types=["conservative", "simple", "complex"],
-    preprocessor_class=ExamplePreprocessor,
-    sequence_length=60,
+trainer = NoTrainTrainer(
+    symbols=[SymbolIn(symbol="EURUSD", group="forex")],
+    sequence_length=2800,
+    preprocessor_class=Preprocess,
+    target_model_type=TimeBasedTarget(stop_minutes=60, mode="prices"),
+    run_performance_test=False,
+    hot_reload_data=False,
+    upload_models=True,
+    target_percentile=99,
+    use_dataframe_format=False,
 )
+results = trainer.run()
 ```
 
-## Custom Preprocessing
-
-Create your own preprocessing class by extending `PreprocessBase`:
-
-```python
-from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
-
-
-class MyPreprocessor(PreprocessBase):
-    def preprocess(self, inputs, training: bool = False):
-        return inputs
-
-    def features_metadata(self):
-        return {}
-```
-
-Use the class in the training pipeline:
+For data generation APIs, pass `source` explicitly when the data is not under
+the `DATA_SOURCE` environment value:
 
 ```python
-results = run_training(
-    symbols=["EURUSD"],
-    model_types=["simple"],
-    preprocessor_class=MyPreprocessor,
-    sequence_length=60,
-)
+data_gen.load_single_data(..., source="metaquotes")
+data_gen.load_data(..., source="metaquotes")
 ```
 
 ## Validate Configuration

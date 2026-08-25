@@ -78,101 +78,7 @@ print(f"Columns: {list(df.columns)}")
 print(df.head())
 ```
 
-### Compute Technical Indicators
-
-```python
-from forexgrand_core.indicators import tf_ma, tf_atr, tf_rsi
-
-# Add indicators to your DataFrame
-df['MA_20'] = tf_ma(df, period=20, column='close')
-df['ATR_14'] = tf_atr(df, period=14)
-df['RSI_14'] = tf_rsi(df, period=14, column='close')
-
-# View the results
-print(df[['close', 'MA_20', 'ATR_14', 'RSI_14']].head(20))
-```
-
-### Train Models
-
-```python
-from forexgrand_core.main import run_training
-
-# Train models
-results = run_training(
-    symbols=['EURUSD', 'GBPUSD'],
-    model_types=['simple', 'conservative'],
-    sequence_length=60,
-)
-
-# Analyze results
-for result in results:
-    print(f"{result.symbol} - {result.model_type}:")
-    print(f"  Accuracy: {result.accuracy}")
-    print(f"  Precision: {result.precision}")
-    print(f"  Model saved: {result.model_path}")
-```
-
-## 4. Available Indicators
-
-All indicators work with pandas DataFrames containing OHLCV data.
-
-### Basic Indicators
-
-```python
-from forexgrand_core import indicators
-
-# Moving Average
-ma = indicators.tf_ma(df, period=20, column='close')
-
-# Average True Range (volatility)
-atr = indicators.tf_atr(df, period=14)
-
-# Relative Strength Index (momentum)
-rsi = indicators.tf_rsi(df, period=14, column='close')
-
-# Standard Deviation
-stdev = indicators.tf_stdev(df, period=20, column='close')
-
-# Slope (linear regression)
-slope = indicators.tf_slope(df, period=20, column='close')
-```
-
-### Complex Indicators
-
-```python
-# Bollinger Bands
-bands = indicators.tf_bollinger_bands(df, period=20, deviation=2.0)
-print(bands.head())  # Returns DataFrame with 'upper', 'middle', 'lower'
-
-# German-Klass Volatility
-gk_vol = indicators.tf_german_klass_volatility(df, period=14)
-
-# Wick-to-Range Ratio
-wick_ratio = indicators.tf_wick_bar_range_ratio(df)
-
-# Normalize Feature
-normalized = indicators.tf_normalize_feature(df, 'close', lower_quantile=0.01, upper_quantile=0.99)
-```
-
-### Factory Functions
-
-Use factory functions to create indicators with fixed parameters:
-
-```python
-# Create MA function with fixed period
-ma_20 = indicators.ma_factory(period=20, column='close')
-ma_values = ma_20(df)
-
-# Create slope function
-slope_14 = indicators.slope_factory(period=14)
-slope_values = slope_14(df)
-
-# Create ATR function
-atr_14 = indicators.atr_factory(period=14)
-atr_values = atr_14(df)
-```
-
-## 5. Configuration Reference
+## 4. Configuration Reference
 
 ### Storage Backends
 
@@ -286,46 +192,6 @@ for symbol in symbols:
     df, props = manager.load_data(symbol, 'forex')
     dataframes[symbol] = df
     print(f"{symbol}: {len(df)} rows loaded")
-```
-
-### Create Custom Preprocessing
-
-```python
-from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
-
-class CustomPreprocessor(PreprocessBase):
-    def process(self, df):
-        # Your custom feature engineering
-        df['custom_feature'] = df['high'] - df['low']
-        return df
-
-from forexgrand_core.main import run_training
-
-results = run_training(
-    symbols=['EURUSD'],
-    model_types=['simple'],
-    preprocessor_class=CustomPreprocessor,
-)
-```
-
-### Batch Process Multiple Symbols
-
-```python
-from forexgrand_core.main import run_training
-
-symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'EURJPY']
-models = ['conservative', 'simple']
-
-results = run_training(
-    symbols=symbols,
-    model_types=models,
-    sequence_length=60,
-)
-
-# Summary
-print(f"Trained {len(results)} models")
-for r in results:
-    print(f"{r.symbol:8s} {r.model_type:12s} accuracy: {r.accuracy:.4f}")
 ```
 
 ## Support & Help
