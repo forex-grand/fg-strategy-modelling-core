@@ -102,20 +102,25 @@ class SignalExtractor:
         count = len(market) - self.sequence_length + 1
         if count <= 0:
             return pd.DataFrame(), 0
-        window_starts = range(0, count, self.stride)
-        windows = {
-            column: np.stack([market[column].to_numpy()[i:i + self.sequence_length] for i in window_starts])
-            for column in ("_timestamp", "open", "high", "low", "close", "spread", "real_volume", "tick_volume")
-        }
-        windows["time"] = windows.pop("_timestamp")
-        window_count = len(windows["time"])
+        window_starts = np.arange(0, count, self.stride)
+        window_count = len(window_starts)
         method = next((getattr(self.strategy, name, None) for name in ("generate_signals", "signals", "predict") if callable(getattr(self.strategy, name, None))), None)
         if method is None:
             raise StrategyLoadError("Strategy must expose generate_signals(batch).")
         chunks = []
+        columns = ("_timestamp", "open", "high", "low", "close", "spread", "real_volume", "tick_volume")
+        print(f"[BACKTEST] extracting {window_count} windows in batches of {self.batch_size}", flush=True)
         for start in range(0, window_count, self.batch_size):
             end = min(window_count, start + self.batch_size)
-            result = method({key: value[start:end] for key, value in windows.items()})
+            batch_starts = window_starts[start:end]
+            batch = {
+                "time" if column == "_timestamp" else column: np.stack(
+                    [market[column].to_numpy()[window_start:window_start + self.sequence_length] for window_start in batch_starts]
+                )
+                for column in columns
+            }
+            print(f"[BACKTEST] strategy batch {start}:{end}", flush=True)
+            result = method(batch)
             values = np.asarray(result.get("direction") if isinstance(result, Mapping) else result)
             if values.ndim != 1 or len(values) != end - start:
                 raise ValueError("Strategy directions must contain one value per input window.")
@@ -124,6 +129,7 @@ class SignalExtractor:
                     raise ValueError("Strategy directions must be integral.")
                 values = values.astype(np.int64)
             chunks.append(values.astype(np.int64, copy=False))
+        print("[BACKTEST] strategy batches complete", flush=True)
         directions = np.concatenate(chunks)
         unsupported = int((~np.isin(directions, (0, 1, 2))).sum())
         rows = []
@@ -182,7 +188,7 @@ class BacktestEngine:
                 sl, tp = self.calculator.compute(signal, market)
             except ValueError:
                 continue
-            records.append({"open_time": signal.time, "direction": signal.direction, "status": "pending", "open_price": signal.open_price, "sl": sl, "tp": tp, "max_profit": 0.0, "min_dd": 0.0, "close_time": pd.NA, "close_price": np.nan, "profit": np.nan, "close_reason": None})
+            records.append({"open_time": signal["time"], "direction": signal["direction"], "status": "pending", "open_price": signal["open_price"], "sl": sl, "tp": tp, "max_profit": 0.0, "min_dd": 0.0, "close_time": pd.NA, "close_price": np.nan, "profit": np.nan, "close_reason": None})
         columns = ["open_time", "direction", "status", "open_price", "sl", "tp", "max_profit", "min_dd", "close_time", "close_price", "profit", "close_reason"]
         positions = pd.DataFrame(records, columns=columns)
         profit_equity, dd_equity = [], []
@@ -256,15 +262,20 @@ def _load_strategy(path: str | Path, sequence_length: int) -> Any:
         raise StrategyLoadError(f"Could not initialize strategy: {error}") from error
 
 
-def run_backtest(strategy_path: str | Path, *, data: Optional[pd.DataFrame] = None, data_manager: Optional[DataManager] = None, symbol_pair: Optional[str] = None, instrument_group: Optional[str] = None, sequence_length: int = 1, stride: int = 1, batch_size: int = 1024, sl_calculation: Optional[Mapping[str, Any]] = None, entry_price_type: str = "bid") -> BacktestResult:
+def run_backtest(strategy_path: str | Path, *,bucket_name: str, source: str, symbol_pair: str, instrument_group: Optional[str] = None, sequence_length: int = 60, stride: int = 1, batch_size: int = 1024, sl_calculation: Optional[Mapping[str, Any]] = None, entry_price_type: str = "bid") -> BacktestResult:
     """Run a strategy against a DataManager-compatible OHLC dataframe."""
+    print("[BACKTEST] loading market data", flush=True)
     properties = None
-    if data is None:
-        if data_manager is None or not symbol_pair or not instrument_group:
-            raise ValueError("Provide data or data_manager with symbol_pair and instrument_group.")
-        data, properties = data_manager.load_data(symbol_pair, instrument_group)
+    dm = DataManager(base_bucket_name=bucket_name, source=source)
+    data, properties = dm.load_data(symbol_pair=symbol_pair, instrument_group=instrument_group)
+    print(f"[BACKTEST] loaded {len(data)} market rows", flush=True)
     point_size = float(getattr(properties, "point_size", 1.0))
+    print("[BACKTEST] building market table", flush=True)
     market = MarketTableBuilder.build(data)
+    print("[BACKTEST] loading strategy", flush=True)
     strategy = _load_strategy(strategy_path, sequence_length)
+    print("[BACKTEST] extracting signals", flush=True)
     signals, unsupported = SignalExtractor(strategy, sequence_length, batch_size, entry_price_type, stride).extract(market)
+    print(f"[BACKTEST] extracted {len(signals)} supported signals", flush=True)
+    print("[BACKTEST] running engine", flush=True)
     return BacktestEngine(SLTPCalculator(sl_calculation, point_size)).run(signals, market, unsupported)
