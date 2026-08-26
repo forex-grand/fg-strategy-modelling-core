@@ -150,6 +150,35 @@ data_gen.load_single_data(..., source="metaquotes")
 data_gen.load_data(..., source="metaquotes")
 ```
 
+## Backtest A Strategy
+
+Backtesting uses the same OHLC columns returned by `DataManager`. A strategy file
+must define one `PreprocessBase` subclass with `generate_signals(batch)` returning
+one direction per input window: `0` for buy, `1` for sell, or `2` for no trade.
+
+```python
+from forexgrand_core.backtesting import run_backtest
+from forexgrand_core import DataManager
+
+result = run_backtest(
+    "my_strategy.py",
+    data_manager=DataManager(base_bucket_name="forexgrand-test"),
+    symbol_pair="EURUSD",
+    instrument_group="forex",
+    sequence_length=60,
+    stride=5,
+    sl_calculation={"mode": "fixed", "sl_points": 100, "tp_points": 150},
+)
+print(result.positions)
+print(result.positions_total, result.buy_count, result.sell_count)
+```
+
+`sl_calculation` also supports `range` (`range`, `sl_ratio`, `tp_ratio`) and
+`atr` (`atr_period`, `sl_multiplier`, `tp_multiplier`). Entry prices default to
+the bid-based convention; use `entry_price_type="ask"` or `"mid"` when needed.
+Every position is closed by `tp`, `sl`, a `tiebreak`, or `eod`, and the result
+contains `profit_equity`, `dd_equity`, and `unsupported_signal_count`.
+
 ## Validate Configuration
 
 Configuration is not validated on package import, so `import forexgrand_core` works before credentials are available. Validate explicitly when you want a clear setup error:

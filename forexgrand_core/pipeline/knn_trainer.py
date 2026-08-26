@@ -13,7 +13,7 @@ import tensorflow as tf
 from keras import Layer
 
 from forexgrand_core.models_architecture.knn_model import KNNModel
-from forexgrand_core.pipeline.generate_train_data import GenerateTrainData
+from forexgrand_core.generate_train_data import GenerateTrainData
 from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
 from forexgrand_core.pipeline.pusher import ModelPusher
 from forexgrand_core.schemas import ModelBuildTrainArguments, SymbolIn, TrainingResult

@@ -58,8 +58,14 @@ def __getattr__(name):
         from forexgrand_core.pipeline.trainer import Trainer
         return Trainer
     elif name == "GenerateTrainData":
-        from forexgrand_core.pipeline.generate_train_data import GenerateTrainData
+        from forexgrand_core.generate_train_data import GenerateTrainData
         return GenerateTrainData
+    elif name in {"BacktestResult", "SLTPCalculator", "SignalExtractor", "MarketTableBuilder", "BacktestEngine", "StrategyLoadError", "run_backtest"}:
+        from forexgrand_core.backtesting import (
+            BacktestEngine, BacktestResult, MarketTableBuilder, SLTPCalculator,
+            SignalExtractor, StrategyLoadError, run_backtest,
+        )
+        return locals()[name]
     elif name == "Evaluator":
         from forexgrand_core.pipeline.evaluator import Evaluator
         return Evaluator
@@ -74,4 +80,11 @@ __all__ = [
     "Trainer",
     "GenerateTrainData",
     "Evaluator",
+    "BacktestResult",
+    "SLTPCalculator",
+    "SignalExtractor",
+    "MarketTableBuilder",
+    "BacktestEngine",
+    "StrategyLoadError",
+    "run_backtest",
 ]

@@ -14,7 +14,7 @@ from keras import Layer
 
 from forexgrand_core.models_architecture.base_xgb_model import XGBTrainModel
 from forexgrand_core.pipeline.evaluator import Evaluator
-from forexgrand_core.pipeline.generate_train_data import GenerateTrainData
+from forexgrand_core.generate_train_data import GenerateTrainData
 from forexgrand_core.pipeline.performance_test import test_model_live_performance
 from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
 from forexgrand_core.pipeline.pusher import ModelPusher

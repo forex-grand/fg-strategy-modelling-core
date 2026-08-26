@@ -16,7 +16,7 @@ from forexgrand_core.models_architecture.train_models.conservative_model import 
 from forexgrand_core.models_architecture.train_models.lstm_model import LSTMModel
 from forexgrand_core.settings import Settings
 from forexgrand_core.pipeline.evaluator import Evaluator
-from forexgrand_core.pipeline.generate_train_data import GenerateTrainData
+from forexgrand_core.generate_train_data import GenerateTrainData
 from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
 from forexgrand_core.pipeline.statistics_gen import get_target_statistics
 from forexgrand_core.pipeline.pusher import ModelPusher

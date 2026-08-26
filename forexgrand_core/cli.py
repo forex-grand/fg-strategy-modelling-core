@@ -110,7 +110,7 @@ def _download_data(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _generate_train_data(args: argparse.Namespace) -> dict[str, Any]:
-    from forexgrand_core.pipeline.generate_train_data import GenerateTrainData
+    from forexgrand_core.generate_train_data import GenerateTrainData
     from forexgrand_core.schemas import TimeBasedTarget
 
     target_model = None

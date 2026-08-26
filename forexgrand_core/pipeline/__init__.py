@@ -31,7 +31,7 @@ def __getattr__(name):
 
         return Evaluator
     if name == "GenerateTrainData":
-        from forexgrand_core.pipeline.generate_train_data import GenerateTrainData
+        from forexgrand_core.generate_train_data import GenerateTrainData
 
         return GenerateTrainData
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -6,7 +6,7 @@ import requests
 import json
 from forexgrand_core.models_architecture.base_model import BaseModel
 from forexgrand_core.settings import Settings
-from forexgrand_core.pipeline.generate_train_data import GenerateTrainData
+from forexgrand_core.generate_train_data import GenerateTrainData
 import os
 import glob
 from forexgrand_core.pipeline.feature_selection import transform_fe
