@@ -37,7 +37,7 @@ Environment Setup:
     See README.md for required environment variables and configuration.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.2"
 __author__ = "ForexGrand Team"
 __license__ = "MIT"
 
@@ -60,10 +60,12 @@ def __getattr__(name):
     elif name == "GenerateTrainData":
         from forexgrand_core.generate_train_data import GenerateTrainData
         return GenerateTrainData
-    elif name in {"BacktestResult", "SLTPCalculator", "SignalExtractor", "MarketTableBuilder", "BacktestEngine", "StrategyLoadError", "run_backtest"}:
+    elif name in {"BacktestResult", "SLTPCalculator", "SignalExtractor", "MarketTableBuilder", "BacktestEngine", "StrategyLoadError", "run_backtest", "FIXED_LOT", "PERCENTAGE", "MARTINGALE", "ANTIMARTINGALE", "FIXED_SLTP", "RANGE", "ATR", "LOTSIZERS", "SLTP_MODES"}:
         from forexgrand_core.backtesting import (
-            BacktestEngine, BacktestResult, MarketTableBuilder, SLTPCalculator,
-            SignalExtractor, StrategyLoadError, run_backtest,
+            ANTIMARTINGALE, ATR, FIXED_LOT, FIXED_SLTP, LOTSIZERS, MARTINGALE,
+            PERCENTAGE, RANGE, SLTP_MODES, BacktestEngine, BacktestResult,
+            MarketTableBuilder, SLTPCalculator, SignalExtractor,
+            StrategyLoadError, run_backtest,
         )
         return locals()[name]
     elif name == "Evaluator":
@@ -87,4 +89,13 @@ __all__ = [
     "BacktestEngine",
     "StrategyLoadError",
     "run_backtest",
+    "FIXED_LOT",
+    "PERCENTAGE",
+    "MARTINGALE",
+    "ANTIMARTINGALE",
+    "FIXED_SLTP",
+    "RANGE",
+    "ATR",
+    "LOTSIZERS",
+    "SLTP_MODES",
 ]

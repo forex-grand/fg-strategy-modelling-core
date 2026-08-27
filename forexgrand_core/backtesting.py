@@ -19,15 +19,184 @@ class StrategyLoadError(ValueError):
     """Raised when a strategy module cannot be loaded or validated."""
 
 
+# =====================================================================
+# Lot sizing
+# =====================================================================
+
+LOTSIZE_FIXED = 0
+LOTSIZE_PERCENTAGE = 1
+LOTSIZE_MARTINGALE = 2
+LOTSIZE_ANTIMARTINGALE = 3
+
+_LOTSIZE_PARAM_LEN = 8
+
+
+def FIXED_LOT(lots: float = 0.01) -> tuple[int, np.ndarray]:
+    """Constant lot size regardless of account state or trade history."""
+    if lots <= 0:
+        raise ValueError("lots must be positive")
+    params = np.zeros(_LOTSIZE_PARAM_LEN, dtype=np.float64)
+    params[0] = float(lots)
+    return LOTSIZE_FIXED, params
+
+
+def PERCENTAGE(
+    risk_ratio: float,
+    point_value: float = 1.0,
+    min_lot: float = 0.01,
+    max_lot: float = 100.0,
+) -> tuple[int, np.ndarray]:
+    """Risk a fixed ratio of current balance per trade."""
+    if not (0 < risk_ratio <= 1):
+        raise ValueError("risk_ratio must be between 0 (exclusive) and 1 (inclusive)")
+    if point_value <= 0:
+        raise ValueError("point_value must be positive")
+    if min_lot <= 0:
+        raise ValueError("min_lot must be positive")
+    if max_lot < min_lot:
+        raise ValueError("max_lot must be >= min_lot")
+    params = np.zeros(_LOTSIZE_PARAM_LEN, dtype=np.float64)
+    params[0] = float(risk_ratio)
+    params[4] = float(point_value)
+    params[5] = float(min_lot)
+    params[6] = float(max_lot)
+    return LOTSIZE_PERCENTAGE, params
+
+
+def _validate_ratio_progression(
+    base: float, multiplier: float, max_steps: int,
+    base_lot_mode: str, point_value: float, min_lot: float, max_lot: float,
+) -> None:
+    if base_lot_mode not in {"ratio", "lot"}:
+        raise ValueError("base_lot_mode must be 'ratio' or 'lot'")
+    if base_lot_mode == "ratio" and not (0 < base <= 1):
+        raise ValueError("base must be between 0 (exclusive) and 1 (inclusive) in ratio mode")
+    if base_lot_mode == "lot" and base <= 0:
+        raise ValueError("base must be positive in lot mode")
+    if multiplier < 1:
+        raise ValueError("multiplier must be >= 1")
+    if max_steps < 0:
+        raise ValueError("max_steps must be >= 0")
+    if point_value <= 0:
+        raise ValueError("point_value must be positive")
+    if min_lot <= 0:
+        raise ValueError("min_lot must be positive")
+    if max_lot < min_lot:
+        raise ValueError("max_lot must be >= min_lot")
+
+
+def _ratio_progression(
+    type_code: int, base: float, multiplier: float, max_steps: int,
+    hold_at_max_steps: bool, base_lot_mode: str, point_value: float,
+    min_lot: float, max_lot: float,
+) -> tuple[int, np.ndarray]:
+    _validate_ratio_progression(base, multiplier, max_steps, base_lot_mode,
+                                point_value, min_lot, max_lot)
+    params = np.zeros(_LOTSIZE_PARAM_LEN, dtype=np.float64)
+    params[0] = float(base)
+    params[1] = float(multiplier)
+    params[2] = float(max_steps)
+    params[3] = 1.0 if hold_at_max_steps else 0.0
+    params[4] = float(point_value)
+    params[5] = float(min_lot)
+    params[6] = float(max_lot)
+    params[7] = 1.0 if base_lot_mode == "lot" else 0.0
+    return type_code, params
+
+
+def MARTINGALE(base: float = 0.01, multiplier: float = 2.0, max_steps: int = 4,
+               hold_at_max_steps: bool = False, point_value: float = 1.0,
+               min_lot: float = 0.01, max_lot: float = 100.0,
+               base_lot_mode: str = "ratio") -> tuple[int, np.ndarray]:
+    """Scale a ratio or lot value up on consecutive losing closes."""
+    return _ratio_progression(LOTSIZE_MARTINGALE, base, multiplier, max_steps,
+                              hold_at_max_steps, base_lot_mode, point_value,
+                              min_lot, max_lot)
+
+
+def ANTIMARTINGALE(base: float = 0.01, multiplier: float = 2.0, max_steps: int = 4,
+                   hold_at_max_steps: bool = False, point_value: float = 1.0,
+                   min_lot: float = 0.01, max_lot: float = 100.0,
+                   base_lot_mode: str = "ratio") -> tuple[int, np.ndarray]:
+    """Scale a ratio or lot value up on consecutive winning closes."""
+    return _ratio_progression(LOTSIZE_ANTIMARTINGALE, base, multiplier, max_steps,
+                              hold_at_max_steps, base_lot_mode, point_value,
+                              min_lot, max_lot)
+
+
+LOTSIZERS = [
+    ("FIXED_LOT", LOTSIZE_FIXED, FIXED_LOT),
+    ("PERCENTAGE", LOTSIZE_PERCENTAGE, PERCENTAGE),
+    ("MARTINGALE", LOTSIZE_MARTINGALE, MARTINGALE),
+    ("ANTIMARTINGALE", LOTSIZE_ANTIMARTINGALE, ANTIMARTINGALE),
+]
+
+
+@njit(cache=True, inline="always")
+def _round2(x: float) -> float:
+    return np.floor(x * 100.0 + 0.5) / 100.0
+
+
+@njit(cache=True, inline="always")
+def _ratio_to_lot(ratio: float, balance: float, sl_points: float,
+                  point_value: float, min_lot: float, max_lot: float) -> float:
+    if sl_points <= 0.0:
+        return min_lot
+    lot = ratio * (balance / point_value) / sl_points
+    return _round2(min_lot if lot < min_lot else max_lot if lot > max_lot else lot)
+
+
+@njit(cache=True, inline="always")
+def _compute_lot(lotsizer_type: int, params: np.ndarray, balance: float,
+                 sl_points: float, win_streak: int, loss_streak: int) -> float:
+    if lotsizer_type == LOTSIZE_FIXED:
+        return params[0]
+    if lotsizer_type == LOTSIZE_PERCENTAGE:
+        return _ratio_to_lot(params[0], balance, sl_points, params[4], params[5], params[6])
+    if lotsizer_type == LOTSIZE_MARTINGALE or lotsizer_type == LOTSIZE_ANTIMARTINGALE:
+        streak = loss_streak if lotsizer_type == LOTSIZE_MARTINGALE else win_streak
+        max_steps = int(params[2])
+        steps = min(streak, max_steps)
+        if max_steps > 0 and steps == max_steps and params[3] <= 0.5:
+            steps = streak % max_steps
+        calculated_value = params[0] * (params[1] ** steps)
+        if params[7] > 0.5:
+            return calculated_value
+        return _ratio_to_lot(calculated_value, balance, sl_points,
+                             params[4], params[5], params[6])
+    return params[0]
+
+
+# =====================================================================
+# SL / TP calculation
+# =====================================================================
+
+def FIXED_SLTP(sl_points: float = 100, tp_points: float = 100) -> dict:
+    return {"mode": "fixed", "sl_points": sl_points, "tp_points": tp_points}
+
+
+def RANGE(range: int = 60, sl_ratio: float = 1.0, tp_ratio: float = 1.0) -> dict:
+    return {"mode": "range", "range": range, "sl_ratio": sl_ratio, "tp_ratio": tp_ratio}
+
+
+def ATR(sl_multiplier: float = 3.0, tp_multiplier: float = 3.0, atr_period: int = 14) -> dict:
+    return {"mode": "atr", "sl_multiplier": sl_multiplier, "tp_multiplier": tp_multiplier,
+            "atr_period": atr_period}
+
+
+SLTP_MODES = [("FIXED_SLTP", FIXED_SLTP), ("RANGE", RANGE), ("ATR", ATR)]
+
+
 @dataclass
 class BacktestResult:
     positions: pd.DataFrame
-    profit_equity: pd.Series
-    dd_equity: pd.Series
+    balance_equity: pd.Series
+    equity_curve: pd.Series
     positions_total: int
     buy_count: int
     sell_count: int
     unsupported_signal_count: int
+    final_balance: float
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -160,22 +329,24 @@ class SignalExtractor:
 def _run_core(
     order, open_time_sorted, direction, open_price, sl, tp,
     m_timestamps, high_bid, low_bid, high_ask, low_ask, close_col,
-    n, n_bars,
+    n, n_bars, lotsizer_type, lotsizer_params, point_size, initial_balance,
 ):
-    max_profit = np.zeros(n, dtype=np.float64)
-    min_dd = np.zeros(n, dtype=np.float64)
     close_time = np.full(n, -1, dtype=np.int64)
     close_price = np.full(n, np.nan, dtype=np.float64)
     profit = np.full(n, np.nan, dtype=np.float64)
     close_reason = np.full(n, -1, dtype=np.int8)
     status = np.zeros(n, dtype=np.int8)
+    lots = np.zeros(n, dtype=np.float64)
 
-    profit_equity = np.zeros(n_bars, dtype=np.float64)
-    dd_equity = np.zeros(n_bars, dtype=np.float64)
+    balance_equity = np.zeros(n_bars, dtype=np.float64)
+    equity_curve = np.zeros(n_bars, dtype=np.float64)
     active = np.empty(n, dtype=np.int64)
     active_len = 0
     activate_ptr = 0
     bars_used = n_bars
+    balance = initial_balance
+    win_streak = 0
+    loss_streak = 0
 
     for bar_i in range(n_bars):
         ts = m_timestamps[bar_i]
@@ -184,30 +355,18 @@ def _run_core(
         ha = high_ask[bar_i]
         la = low_ask[bar_i]
         bar_close = close_col[bar_i]
-        pe = 0.0
-        de = 0.0
+        floating = 0.0
         write = 0
 
         for read in range(active_len):
             pid = active[read]
             position_direction = direction[pid]
             if position_direction == 0:
-                mp = (hb if hb < tp[pid] else tp[pid]) - open_price[pid]
-                dd = (lb if lb > sl[pid] else sl[pid]) - open_price[pid]
                 sl_hit = lb <= sl[pid]
                 tp_hit = hb >= tp[pid]
             else:
-                mp = open_price[pid] - (la if la > tp[pid] else tp[pid])
-                dd = open_price[pid] - (ha if ha < sl[pid] else sl[pid])
                 sl_hit = ha >= sl[pid]
                 tp_hit = la <= tp[pid]
-
-            if mp > max_profit[pid]:
-                max_profit[pid] = mp
-            if dd < min_dd[pid]:
-                min_dd[pid] = dd
-            pe += max_profit[pid]
-            de += min_dd[pid]
 
             if sl_hit or tp_hit:
                 both = sl_hit and tp_hit
@@ -219,19 +378,35 @@ def _run_core(
                 status[pid] = 2
                 close_time[pid] = ts
                 close_price[pid] = price
-                profit[pid] = price - open_price[pid] if position_direction == 0 else open_price[pid] - price
+                pos_profit = price - open_price[pid] if position_direction == 0 else open_price[pid] - price
+                q_profit = lots[pid] * (pos_profit / point_size)
+                profit[pid] = q_profit
                 close_reason[pid] = 3 if both else (0 if hit_tp else 1)
+                balance += q_profit
+                if q_profit > 0.0:
+                    win_streak += 1
+                    loss_streak = 0
+                elif q_profit < 0.0:
+                    loss_streak += 1
+                    win_streak = 0
+                else:
+                    win_streak = 0
+                    loss_streak = 0
             else:
                 active[write] = pid
                 write += 1
+                floating_price_diff = (bar_close - open_price[pid]) if position_direction == 0 else (open_price[pid] - bar_close)
+                floating += lots[pid] * (floating_price_diff / point_size)
 
         active_len = write
-        profit_equity[bar_i] = pe
-        dd_equity[bar_i] = de
+        balance_equity[bar_i] = balance
+        equity_curve[bar_i] = balance + floating
 
         while activate_ptr < n and open_time_sorted[activate_ptr] == ts:
             pid = order[activate_ptr]
             status[pid] = 1
+            sl_points = abs(open_price[pid] - sl[pid]) / point_size
+            lots[pid] = _compute_lot(lotsizer_type, lotsizer_params, balance, sl_points, win_streak, loss_streak)
             active[active_len] = pid
             active_len += 1
             activate_ptr += 1
@@ -240,10 +415,7 @@ def _run_core(
             bars_used = bar_i + 1
             break
 
-    return (
-        max_profit, min_dd, close_time, close_price, profit, close_reason,
-        status, profit_equity, dd_equity, bars_used,
-    )
+    return close_time, close_price, profit, close_reason, status, bars_used, lots, balance_equity, equity_curve, balance
 
 
 class MarketTableBuilder:
@@ -277,8 +449,12 @@ class MarketTableBuilder:
 
 
 class BacktestEngine:
-    def __init__(self, calculator: SLTPCalculator) -> None:
+    def __init__(self, calculator: SLTPCalculator,
+                 lot_sizing: Optional[tuple[int, np.ndarray]] = None,
+                 initial_balance: float = 10_000.0) -> None:
         self.calculator = calculator
+        self.lot_sizing = lot_sizing if lot_sizing is not None else FIXED_LOT(lots=1.0)
+        self.initial_balance = float(initial_balance)
 
     def run(self, signals: pd.DataFrame, market: pd.DataFrame, unsupported: int) -> BacktestResult:
         n = len(signals)
@@ -314,34 +490,36 @@ class BacktestEngine:
         high_ask = market["high_ask"].to_numpy(dtype=np.float64)
         low_ask = market["low_ask"].to_numpy(dtype=np.float64)
         close_col = market["close"].to_numpy(dtype=np.float64)
-        spread_col = market["spread"].to_numpy(dtype=np.float64)
         n_bars = len(market)
+        lotsizer_type, lotsizer_params = self.lot_sizing
+        point_size = self.calculator.symbol_points
 
         replay_progress = tqdm(total=n_bars, desc="[BACKTEST] replaying bars", unit="bar")
         try:
             (
-                max_profit, min_dd, close_time, close_price, profit, close_reason,
-                status, profit_equity, dd_equity, bars_used,
+                close_time, close_price, profit, close_reason, status, bars_used,
+                lots, balance_equity, equity_curve, final_balance,
             ) = _run_core(
                 order, open_time_sorted, direction, open_price, sl, tp,
                 m_timestamps, high_bid, low_bid, high_ask, low_ask, close_col,
-                n, n_bars,
+                n, n_bars, lotsizer_type, lotsizer_params, point_size, self.initial_balance,
             )
             replay_progress.update(n_bars)
         finally:
             replay_progress.close()
-        profit_equity = profit_equity[:bars_used]
-        dd_equity = dd_equity[:bars_used]
+        balance_equity = balance_equity[:bars_used]
+        equity_curve = equity_curve[:bars_used]
 
         remaining = np.nonzero(status != 2)[0]
         if remaining.size:
             last_ts = int(m_timestamps[-1])
-            last_close, last_spread = close_col[-1], spread_col[-1]
+            last_close, last_spread = close_col[-1], market["spread"].to_numpy(dtype=np.float64)[-1]
             remaining_directions = direction[remaining]
             remaining_close = np.where(remaining_directions == 0, last_close, last_close + last_spread)
             close_time[remaining] = last_ts
             close_price[remaining] = remaining_close
-            profit[remaining] = np.where(remaining_directions == 0, remaining_close - open_price[remaining], open_price[remaining] - remaining_close)
+            remaining_price_diff = np.where(remaining_directions == 0, remaining_close - open_price[remaining], open_price[remaining] - remaining_close)
+            profit[remaining] = lots[remaining] * (remaining_price_diff / point_size)
             close_reason[remaining] = 2
             status[remaining] = 2
 
@@ -353,8 +531,7 @@ class BacktestEngine:
             "open_price": open_price,
             "sl": sl,
             "tp": tp,
-            "max_profit": max_profit,
-            "min_dd": min_dd,
+            "lot": lots,
             "close_time": pd.array(close_time, dtype="Int64"),
             "close_price": close_price,
             "profit": profit,
@@ -362,28 +539,14 @@ class BacktestEngine:
         }).set_index("open_time")
         return BacktestResult(
             positions,
-            pd.Series(profit_equity, index=market.index[:len(profit_equity)], name="profit_equity"),
-            pd.Series(dd_equity, index=market.index[:len(dd_equity)], name="dd_equity"),
+            pd.Series(balance_equity, index=market.index[:len(balance_equity)], name="balance_equity"),
+            pd.Series(equity_curve, index=market.index[:len(equity_curve)], name="equity_curve"),
             len(positions),
             int((positions.direction == 0).sum()) if len(positions) else 0,
             int((positions.direction == 1).sum()) if len(positions) else 0,
             unsupported,
+            float(final_balance),
         )
-
-    @staticmethod
-    def _close_hits(positions: pd.DataFrame, indexes: pd.Index, bar: Any, timestamp: int, is_buy: bool) -> None:
-        rows = positions.loc[indexes]
-        sl_hit = bar.low_bid <= rows.sl if is_buy else bar.high_ask >= rows.sl
-        tp_hit = bar.high_bid >= rows.tp if is_buy else bar.low_ask <= rows.tp
-        for index in rows.index[sl_hit | tp_hit]:
-            both = bool(sl_hit.get(index, False) and tp_hit.get(index, False))
-            hit_tp = bool(tp_hit.get(index, False) and (not both or (bar.close >= rows.at[index, "tp"] if is_buy else bar.close <= rows.at[index, "tp"])))
-            price = rows.at[index, "tp"] if hit_tp else rows.at[index, "sl"]
-            positions.at[index, "status"] = "closed"
-            positions.at[index, "close_time"] = timestamp
-            positions.at[index, "close_price"] = price
-            positions.at[index, "profit"] = price - rows.at[index, "open_price"] if is_buy else rows.at[index, "open_price"] - price
-            positions.at[index, "close_reason"] = "tiebreak" if both else ("tp" if hit_tp else "sl")
 
 
 def _load_strategy(path: str | Path, sequence_length: int) -> Any:
@@ -405,7 +568,23 @@ def _load_strategy(path: str | Path, sequence_length: int) -> Any:
         raise StrategyLoadError(f"Could not initialize strategy: {error}") from error
 
 
-def run_backtest(strategy_path: str | Path, *, bucket_name: str, source: str, symbol_pair: str, instrument_group: Optional[str] = None, sequence_length: int = 60, stride: int = 1, batch_size: int = 1024, sl_calculation: Optional[Mapping[str, Any]] = None, entry_price_type: str = "bid", start_index: int = 0, end_index: int = -1, return_in_points: bool = False) -> BacktestResult:
+def run_backtest(
+    strategy_path: str | Path,
+    *,
+    bucket_name: str,
+    source: str,
+    symbol_pair: str,
+    instrument_group: Optional[str] = None,
+    sequence_length: int = 60,
+    stride: int = 1,
+    batch_size: int = 1024,
+    sl_calculation: Optional[Mapping[str, Any]] = None,
+    lot_sizing: Optional[tuple[int, np.ndarray]] = None,
+    initial_balance: float = 10_000.0,
+    entry_price_type: str = "bid",
+    start_index: int = 0,
+    end_index: int = -1,
+) -> BacktestResult:
     """Run a strategy against DataManager-compatible OHLC data.
 
     Args:
@@ -429,16 +608,21 @@ def run_backtest(strategy_path: str | Path, *, bucket_name: str, source: str, sy
             ``atr_period=14``. Unknown keys or unsupported modes raise
             ``ValueError``. Point distances are converted using the symbol's
             ``point_size`` from its instrument properties.
+        lot_sizing: Lot sizer configuration built with ``FIXED_LOT``,
+            ``PERCENTAGE``, ``MARTINGALE``, or ``ANTIMARTINGALE``. ``None``
+            defaults to ``FIXED_LOT(lots=1.0)``. Martingale and
+            antimartingale accept ``base_lot_mode="ratio"`` (the default,
+            internal mode 0) or ``base_lot_mode="lot"`` (direct calculated
+            lot value, internal mode 1).
+        initial_balance: Starting account balance used by balance-dependent
+            lot sizing and both equity curves.
         entry_price_type: Entry convention: ``"bid"`` (default), ``"ask"``,
             or ``"mid"``.
         start_index: Inclusive starting row in the normalized market table.
         end_index: Exclusive ending row; ``-1`` (default) means the final row.
-        return_in_points: If true, divide position profit/drawdown fields and
-            both equity curves by the symbol point size. Price fields remain
-            in price units.
-
     Returns:
-        A ``BacktestResult`` containing positions, equity curves, and counts.
+        A ``BacktestResult`` containing positions, equity curves, counts, and
+        final realized balance.
     """
     print("[BACKTEST] loading market data", flush=True)
     properties = None
@@ -460,19 +644,8 @@ def run_backtest(strategy_path: str | Path, *, bucket_name: str, source: str, sy
     signals, unsupported = SignalExtractor(strategy, sequence_length, batch_size, entry_price_type, stride).extract(market)
     print(f"[BACKTEST] extracted {len(signals)} supported signals", flush=True)
     print("[BACKTEST] running engine", flush=True)
-    result = BacktestEngine(SLTPCalculator(sl_calculation, point_size)).run(signals, market, unsupported)
-    if not return_in_points:
-        return result
-
-    positions = result.positions.copy()
-    for column in ("max_profit", "min_dd", "profit"):
-        positions[column] = positions[column] / point_size
-    return BacktestResult(
-        positions,
-        result.profit_equity / point_size,
-        result.dd_equity / point_size,
-        result.positions_total,
-        result.buy_count,
-        result.sell_count,
-        result.unsupported_signal_count,
-    )
+    return BacktestEngine(
+        SLTPCalculator(sl_calculation, point_size),
+        lot_sizing=lot_sizing,
+        initial_balance=initial_balance,
+    ).run(signals, market, unsupported)
