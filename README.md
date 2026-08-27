@@ -167,6 +167,8 @@ result = run_backtest(
     instrument_group="forex",
     sequence_length=60,
     stride=5,
+    start_index=0,
+    end_index=-1,
     sl_calculation={"mode": "fixed", "sl_points": 100, "tp_points": 150},
 )
 print(result.positions)
@@ -176,6 +178,8 @@ print(result.positions_total, result.buy_count, result.sell_count)
 `sl_calculation` also supports `range` (`range`, `sl_ratio`, `tp_ratio`) and
 `atr` (`atr_period`, `sl_multiplier`, `tp_multiplier`). Entry prices default to
 the bid-based convention; use `entry_price_type="ask"` or `"mid"` when needed.
+Use `start_index` and `end_index` to limit the test data; `end_index` is an
+exclusive endpoint, and `-1` (the default) runs through the final bar.
 Every position is closed by `tp`, `sl`, a `tiebreak`, or `eod`, and the result
 contains `profit_equity`, `dd_equity`, and `unsupported_signal_count`.
 

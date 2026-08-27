@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fg-strategy-modelling-core"
-version = "0.2.0"
+version = "0.2.1"
 description = "ForexGrand strategy modelling core library for ML model training on forex data | financial price data"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -39,12 +39,13 @@ classifiers = [
 dependencies = [
     "setuptools>=70.0,<81.0",
     "boto3>=1.34.0,<2.0.0",
-    "tensorflow-cpu>=2.21.0,<2.22.0",
+    "tensorflow>=2.21.0,<2.22.0",
     "pydantic>=2.0.0,<3.0.0",
     "keras>=3.13.2,<3.14.1",
     "keras-tuner>=1.4.7,<2.0.0",
     "xgboost-cpu>=3.2.0,<3.3.0",
     "optuna>=4.0.0,<5.0.0",
+    "tqdm>=4.66.0,<5.0.0",
     "torch>=2.10.0,<2.20.0",
     "shap>=0.52.0,<0.53.0",
     "openfe>=0.0.12,<0.0.13",

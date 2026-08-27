@@ -8,6 +8,7 @@ from typing import Any, Mapping, Optional
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from forexgrand_core.data_manager import DataManager
 from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
@@ -110,7 +111,12 @@ class SignalExtractor:
         chunks = []
         columns = ("_timestamp", "open", "high", "low", "close", "spread", "real_volume", "tick_volume")
         print(f"[BACKTEST] extracting {window_count} windows in batches of {self.batch_size}", flush=True)
-        for start in range(0, window_count, self.batch_size):
+        for start in tqdm(
+            range(0, window_count, self.batch_size),
+            total=(window_count + self.batch_size - 1) // self.batch_size,
+            desc="[BACKTEST] strategy batches",
+            unit="batch",
+        ):
             end = min(window_count, start + self.batch_size)
             batch_starts = window_starts[start:end]
             batch = {
@@ -119,7 +125,6 @@ class SignalExtractor:
                 )
                 for column in columns
             }
-            print(f"[BACKTEST] strategy batch {start}:{end}", flush=True)
             result = method(batch)
             values = np.asarray(result.get("direction") if isinstance(result, Mapping) else result)
             if values.ndim != 1 or len(values) != end - start:
@@ -152,7 +157,10 @@ class SignalExtractor:
 
 class MarketTableBuilder:
     @staticmethod
-    def build(dataframe: pd.DataFrame) -> pd.DataFrame:
+    def build(dataframe: pd.DataFrame, point_size: float = 1.0) -> pd.DataFrame:
+        point_size = float(point_size)
+        if point_size <= 0:
+            raise ValueError("point_size must be greater than zero.")
         frame = dataframe.reset_index() if "time" not in dataframe.columns and dataframe.index.name == "time" else dataframe.copy()
         required = {"time", "open", "high", "low", "close"}
         missing = required - set(frame.columns)
@@ -163,7 +171,7 @@ class MarketTableBuilder:
             raise ValueError("The 'time' column contains invalid datetime values.")
         frame = frame.sort_values("time").drop_duplicates("time").reset_index(drop=True)
         spread_values = frame["spread"] if "spread" in frame.columns else pd.Series(0.0, index=frame.index)
-        frame["spread"] = pd.to_numeric(spread_values, errors="coerce").fillna(0.0)
+        frame["spread"] = pd.to_numeric(spread_values, errors="coerce").fillna(0.0) * float(point_size)
         for column in ("real_volume", "tick_volume"):
             if column not in frame.columns:
                 frame[column] = 0.0
@@ -182,50 +190,141 @@ class BacktestEngine:
         self.calculator = calculator
 
     def run(self, signals: pd.DataFrame, market: pd.DataFrame, unsupported: int) -> BacktestResult:
-        records = []
-        for signal in signals.to_dict("records"):
+        n = len(signals)
+        open_price = np.empty(n, dtype=np.float64)
+        direction = np.empty(n, dtype=np.int8)
+        sl = np.empty(n, dtype=np.float64)
+        tp = np.empty(n, dtype=np.float64)
+        open_time = np.empty(n, dtype=np.int64)
+        keep = np.zeros(n, dtype=bool)
+
+        for i, signal in enumerate(signals.to_dict("records")):
             try:
-                sl, tp = self.calculator.compute(signal, market)
+                stop_loss, take_profit = self.calculator.compute(signal, market)
             except ValueError:
                 continue
-            records.append({"open_time": signal["time"], "direction": signal["direction"], "status": "pending", "open_price": signal["open_price"], "sl": sl, "tp": tp, "max_profit": 0.0, "min_dd": 0.0, "close_time": pd.NA, "close_price": np.nan, "profit": np.nan, "close_reason": None})
-        columns = ["open_time", "direction", "status", "open_price", "sl", "tp", "max_profit", "min_dd", "close_time", "close_price", "profit", "close_reason"]
-        positions = pd.DataFrame(records, columns=columns)
-        profit_equity, dd_equity = [], []
-        for timestamp, bar in market.iterrows():
-            open_mask = positions.status.eq("open") if len(positions) else pd.Series(dtype=bool)
-            if open_mask.any():
-                current = positions.loc[open_mask]
-                buy_index, sell_index = current.index[current.direction.eq(0)], current.index[current.direction.eq(1)]
-                positions.loc[buy_index, "max_profit"] = np.maximum(current.loc[buy_index, "max_profit"], np.minimum(bar.high_bid, current.loc[buy_index, "tp"]) - current.loc[buy_index, "open_price"])
-                positions.loc[buy_index, "min_dd"] = np.minimum(current.loc[buy_index, "min_dd"], np.maximum(bar.low_bid, current.loc[buy_index, "sl"]) - current.loc[buy_index, "open_price"])
-                positions.loc[sell_index, "max_profit"] = np.maximum(current.loc[sell_index, "max_profit"], current.loc[sell_index, "open_price"] - np.maximum(bar.low_ask, current.loc[sell_index, "tp"]))
-                positions.loc[sell_index, "min_dd"] = np.minimum(current.loc[sell_index, "min_dd"], current.loc[sell_index, "open_price"] - np.minimum(bar.high_ask, current.loc[sell_index, "sl"]))
-                profit_equity.append(float(positions.loc[open_mask, "max_profit"].sum()))
-                dd_equity.append(float(positions.loc[open_mask, "min_dd"].sum()))
-                self._close_hits(positions, buy_index, bar, timestamp, True)
-                self._close_hits(positions, sell_index, bar, timestamp, False)
+            open_price[i] = signal["open_price"]
+            direction[i] = signal["direction"]
+            sl[i] = stop_loss
+            tp[i] = take_profit
+            open_time[i] = signal["time"]
+            keep[i] = True
+
+        idx = np.nonzero(keep)[0]
+        open_price, direction, sl, tp, open_time = (
+            open_price[idx], direction[idx], sl[idx], tp[idx], open_time[idx]
+        )
+        n = len(idx)
+        max_profit = np.zeros(n, dtype=np.float64)
+        min_dd = np.zeros(n, dtype=np.float64)
+        close_time = np.full(n, -1, dtype=np.int64)
+        close_price = np.full(n, np.nan, dtype=np.float64)
+        profit = np.full(n, np.nan, dtype=np.float64)
+        close_reason = np.full(n, -1, dtype=np.int8)
+        status = np.zeros(n, dtype=np.int8)
+
+        order = np.argsort(open_time, kind="stable")
+        open_time_sorted = open_time[order]
+        m_timestamps = market.index.to_numpy()
+        high_bid = market["high_bid"].to_numpy()
+        low_bid = market["low_bid"].to_numpy()
+        high_ask = market["high_ask"].to_numpy()
+        low_ask = market["low_ask"].to_numpy()
+        close_col = market["close"].to_numpy()
+        spread_col = market["spread"].to_numpy()
+        n_bars = len(market)
+        profit_equity = np.zeros(n_bars, dtype=np.float64)
+        dd_equity = np.zeros(n_bars, dtype=np.float64)
+        active = np.empty(n, dtype=np.int64)
+        active_len = 0
+        activate_ptr = 0
+
+        for bar_i in tqdm(range(n_bars), total=n_bars, desc="[BACKTEST] replaying bars", unit="bar"):
+            ts = m_timestamps[bar_i]
+            hb, lb, ha, la = high_bid[bar_i], low_bid[bar_i], high_ask[bar_i], low_ask[bar_i]
+            if active_len > 0:
+                active_ids = active[:active_len]
+                active_directions = direction[active_ids]
+                buy_ids, sell_ids = active_ids[active_directions == 0], active_ids[active_directions != 0]
+                if buy_ids.size:
+                    max_profit[buy_ids] = np.maximum(max_profit[buy_ids], np.minimum(hb, tp[buy_ids]) - open_price[buy_ids])
+                    min_dd[buy_ids] = np.minimum(min_dd[buy_ids], np.maximum(lb, sl[buy_ids]) - open_price[buy_ids])
+                if sell_ids.size:
+                    max_profit[sell_ids] = np.maximum(max_profit[sell_ids], open_price[sell_ids] - np.maximum(la, tp[sell_ids]))
+                    min_dd[sell_ids] = np.minimum(min_dd[sell_ids], open_price[sell_ids] - np.minimum(ha, sl[sell_ids]))
+                profit_equity[bar_i] = float(max_profit[active_ids].sum())
+                dd_equity[bar_i] = float(min_dd[active_ids].sum())
+
+                bar_close = close_col[bar_i]
+                still_active = []
+                for position_id in active_ids:
+                    is_buy = direction[position_id] == 0
+                    sl_hit = lb <= sl[position_id] if is_buy else ha >= sl[position_id]
+                    tp_hit = hb >= tp[position_id] if is_buy else la <= tp[position_id]
+                    if sl_hit or tp_hit:
+                        both = sl_hit and tp_hit
+                        hit_tp = (bar_close >= tp[position_id] if is_buy else bar_close <= tp[position_id]) if both else tp_hit
+                        price = tp[position_id] if hit_tp else sl[position_id]
+                        status[position_id] = 2
+                        close_time[position_id] = ts
+                        close_price[position_id] = price
+                        profit[position_id] = price - open_price[position_id] if is_buy else open_price[position_id] - price
+                        close_reason[position_id] = 3 if both else (0 if hit_tp else 1)
+                    else:
+                        still_active.append(position_id)
+                active_len = len(still_active)
+                active[:active_len] = still_active
             else:
-                profit_equity.append(0.0)
-                dd_equity.append(0.0)
-            positions.loc[(positions.status == "pending") & (positions.open_time == timestamp), "status"] = "open"
-            if not len(positions) or not positions.status.isin(["pending", "open"]).any():
+                profit_equity[bar_i] = 0.0
+                dd_equity[bar_i] = 0.0
+
+            while activate_ptr < n and open_time_sorted[activate_ptr] == ts:
+                position_id = order[activate_ptr]
+                status[position_id] = 1
+                active[active_len] = position_id
+                active_len += 1
+                activate_ptr += 1
+            if activate_ptr >= n and active_len == 0:
+                profit_equity = profit_equity[:bar_i + 1]
+                dd_equity = dd_equity[:bar_i + 1]
                 break
-        if len(positions) and positions.status.isin(["pending", "open"]).any():
-            timestamp, bar = int(market.iloc[-1]._timestamp), market.iloc[-1]
-            pending = positions.status.isin(["pending", "open"])
-            positions.loc[pending, "close_time"] = timestamp
-            positions.loc[pending, "status"] = "closed"
-            positions.loc[pending, "close_price"] = np.where(positions.loc[pending, "direction"].eq(0), bar.close, bar.close + bar.spread)
-            positions.loc[pending, "profit"] = np.where(positions.loc[pending, "direction"].eq(0), positions.loc[pending, "close_price"] - positions.loc[pending, "open_price"], positions.loc[pending, "open_price"] - positions.loc[pending, "close_price"])
-            positions.loc[pending, "close_reason"] = "eod"
-        if len(positions):
-            positions.direction = positions.direction.astype("int8")
-            positions.close_time = positions.close_time.astype("Int64")
-            positions.status = positions.status.astype("category")
-            positions.close_reason = positions.close_reason.astype("category")
-            positions = positions.set_index("open_time")
-        return BacktestResult(positions, pd.Series(profit_equity, index=market.index[:len(profit_equity)], name="profit_equity"), pd.Series(dd_equity, index=market.index[:len(dd_equity)], name="dd_equity"), len(positions), int((positions.direction == 0).sum()) if len(positions) else 0, int((positions.direction == 1).sum()) if len(positions) else 0, unsupported)
+
+        remaining = np.nonzero(status != 2)[0]
+        if remaining.size:
+            last_ts = int(m_timestamps[-1])
+            last_close, last_spread = close_col[-1], spread_col[-1]
+            remaining_directions = direction[remaining]
+            remaining_close = np.where(remaining_directions == 0, last_close, last_close + last_spread)
+            close_time[remaining] = last_ts
+            close_price[remaining] = remaining_close
+            profit[remaining] = np.where(remaining_directions == 0, remaining_close - open_price[remaining], open_price[remaining] - remaining_close)
+            close_reason[remaining] = 2
+            status[remaining] = 2
+
+        reason_map = {0: "tp", 1: "sl", 2: "eod", 3: "tiebreak", -1: None}
+        positions = pd.DataFrame({
+            "open_time": open_time,
+            "direction": direction,
+            "status": pd.Categorical(["closed"] * n),
+            "open_price": open_price,
+            "sl": sl,
+            "tp": tp,
+            "max_profit": max_profit,
+            "min_dd": min_dd,
+            "close_time": pd.array(close_time, dtype="Int64"),
+            "close_price": close_price,
+            "profit": profit,
+            "close_reason": pd.Categorical([reason_map[code] for code in close_reason]),
+        }).set_index("open_time")
+        return BacktestResult(
+            positions,
+            pd.Series(profit_equity, index=market.index[:len(profit_equity)], name="profit_equity"),
+            pd.Series(dd_equity, index=market.index[:len(dd_equity)], name="dd_equity"),
+            len(positions),
+            int((positions.direction == 0).sum()) if len(positions) else 0,
+            int((positions.direction == 1).sum()) if len(positions) else 0,
+            unsupported,
+        )
 
     @staticmethod
     def _close_hits(positions: pd.DataFrame, indexes: pd.Index, bar: Any, timestamp: int, is_buy: bool) -> None:
@@ -262,7 +361,7 @@ def _load_strategy(path: str | Path, sequence_length: int) -> Any:
         raise StrategyLoadError(f"Could not initialize strategy: {error}") from error
 
 
-def run_backtest(strategy_path: str | Path, *,bucket_name: str, source: str, symbol_pair: str, instrument_group: Optional[str] = None, sequence_length: int = 60, stride: int = 1, batch_size: int = 1024, sl_calculation: Optional[Mapping[str, Any]] = None, entry_price_type: str = "bid") -> BacktestResult:
+def run_backtest(strategy_path: str | Path, *, bucket_name: str, source: str, symbol_pair: str, instrument_group: Optional[str] = None, sequence_length: int = 60, stride: int = 1, batch_size: int = 1024, sl_calculation: Optional[Mapping[str, Any]] = None, entry_price_type: str = "bid", start_index: int = 0, end_index: int = -1) -> BacktestResult:
     """Run a strategy against a DataManager-compatible OHLC dataframe."""
     print("[BACKTEST] loading market data", flush=True)
     properties = None
@@ -271,7 +370,13 @@ def run_backtest(strategy_path: str | Path, *,bucket_name: str, source: str, sym
     print(f"[BACKTEST] loaded {len(data)} market rows", flush=True)
     point_size = float(getattr(properties, "point_size", 1.0))
     print("[BACKTEST] building market table", flush=True)
-    market = MarketTableBuilder.build(data)
+    market = MarketTableBuilder.build(data, point_size)
+    if start_index < 0:
+        raise ValueError("start_index must be greater than or equal to zero.")
+    if end_index < -1:
+        raise ValueError("end_index must be -1 or greater.")
+    market = market.iloc[start_index:] if end_index == -1 else market.iloc[start_index:end_index]
+    print(f"[BACKTEST] selected market rows {start_index}:{end_index}", flush=True)
     print("[BACKTEST] loading strategy", flush=True)
     strategy = _load_strategy(strategy_path, sequence_length)
     print("[BACKTEST] extracting signals", flush=True)
