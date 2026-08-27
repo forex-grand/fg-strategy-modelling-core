@@ -38,6 +38,8 @@ Installing the package provides an `fg_core` command with data workflow subcomma
 fg_core download_data EURUSD forex --bucket forexgrand-data --source mt5
 fg_core generate_train_data EURUSD forex --sequence-length 2800 --stride 100
 fg_core preprocess_data prices.parquet preprocess.py --output data/processed.pkl.gz
+fg_core run_backtest my_strategy.py EURUSD --bucket forexgrand-test --source dukascopy \
+    --instrument-group forex_majors --sequence-length 60 --stride 5
 ```
 
 `preprocess.py` must define `preprocess_fn(dataframe)`. The input can be CSV, Parquet,
@@ -158,30 +160,41 @@ one direction per input window: `0` for buy, `1` for sell, or `2` for no trade.
 
 ```python
 from forexgrand_core.backtesting import run_backtest
-from forexgrand_core import DataManager
 
 result = run_backtest(
     "my_strategy.py",
-    data_manager=DataManager(base_bucket_name="forexgrand-test"),
+    bucket_name="forexgrand-test",
+    source="dukascopy",
     symbol_pair="EURUSD",
     instrument_group="forex",
     sequence_length=60,
     stride=5,
     start_index=0,
     end_index=-1,
+    return_in_points=True,
     sl_calculation={"mode": "fixed", "sl_points": 100, "tp_points": 150},
 )
 print(result.positions)
 print(result.positions_total, result.buy_count, result.sell_count)
 ```
 
-`sl_calculation` also supports `range` (`range`, `sl_ratio`, `tp_ratio`) and
-`atr` (`atr_period`, `sl_multiplier`, `tp_multiplier`). Entry prices default to
+`sl_calculation` supports exactly these mode-specific keys (omitted keys use the
+shown defaults):
+
+- `{"mode": "fixed", "sl_points": 100, "tp_points": 100}`
+- `{"mode": "range", "range": 60, "sl_ratio": 1.0, "tp_ratio": 1.0}`
+- `{"mode": "atr", "sl_multiplier": 3.0, "tp_multiplier": 3.0, "atr_period": 14}`
+
+Unknown keys or unsupported modes raise `ValueError`. Entry prices default to
 the bid-based convention; use `entry_price_type="ask"` or `"mid"` when needed.
 Use `start_index` and `end_index` to limit the test data; `end_index` is an
 exclusive endpoint, and `-1` (the default) runs through the final bar.
 Every position is closed by `tp`, `sl`, a `tiebreak`, or `eod`, and the result
 contains `profit_equity`, `dd_equity`, and `unsupported_signal_count`.
+Set `return_in_points=True` to divide position profits, drawdowns, and both
+equity curves by the symbol point size. The CLI accepts the same options; pass
+`--sl-calculation` as a JSON object and use `--return-in-points` for point-valued
+output. Add `--output result.pkl.gz` to save the complete result dataclass.
 
 ## Validate Configuration
 

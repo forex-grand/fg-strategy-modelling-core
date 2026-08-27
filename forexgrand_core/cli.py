@@ -90,6 +90,30 @@ def _build_parser() -> argparse.ArgumentParser:
     preprocess.add_argument("--output", type=Path)
     preprocess.add_argument("--function", default="preprocess_fn")
     preprocess.set_defaults(handler=_preprocess_data)
+
+    backtest = subparsers.add_parser("run_backtest", help="Run a strategy against market data")
+    backtest.add_argument("strategy_path", type=_path)
+    backtest.add_argument("symbol_pair")
+    backtest.add_argument("--instrument-group", help="DataManager instrument group")
+    backtest.add_argument("--bucket", required=True, help="DataManager storage bucket")
+    backtest.add_argument("--source", required=True, help="Market-data source")
+    backtest.add_argument("--sequence-length", type=int, default=60, help="Strategy window length (default: 60)")
+    backtest.add_argument("--stride", type=int, default=1, help="Bars between strategy windows (default: 1)")
+    backtest.add_argument("--batch-size", type=int, default=1024, help="Strategy windows per batch (default: 1024)")
+    backtest.add_argument(
+        "--sl-calculation",
+        type=json.loads,
+        metavar="JSON",
+        help=("SL/TP JSON: fixed={mode,sl_points,tp_points}; "
+              "range={mode,range,sl_ratio,tp_ratio}; "
+              "atr={mode,sl_multiplier,tp_multiplier,atr_period}"),
+    )
+    backtest.add_argument("--entry-price-type", choices=("bid", "ask", "mid"), default="bid", help="Entry price convention (default: bid)")
+    backtest.add_argument("--start-index", type=int, default=0, help="Inclusive first market row (default: 0)")
+    backtest.add_argument("--end-index", type=int, default=-1, help="Exclusive last market row; -1 means final row")
+    backtest.add_argument("--return-in-points", action="store_true", help="Return profits and drawdowns in symbol points")
+    backtest.add_argument("--output", type=Path, help="Save the complete result as a gzip pickle")
+    backtest.set_defaults(handler=_run_backtest)
     return parser
 
 
@@ -140,6 +164,39 @@ def _preprocess_data(args: argparse.Namespace) -> dict[str, Any]:
     output_path = _default_preprocessed_path(args.input, args.output)
     _save_gzip_pickle(result, output_path)
     return {"command": "preprocess_data", "output": str(output_path), "type": type(result).__name__}
+
+
+def _run_backtest(args: argparse.Namespace) -> dict[str, Any]:
+    from forexgrand_core.backtesting import run_backtest
+
+    result = run_backtest(
+        args.strategy_path,
+        bucket_name=args.bucket,
+        source=args.source,
+        symbol_pair=args.symbol_pair,
+        instrument_group=args.instrument_group,
+        sequence_length=args.sequence_length,
+        stride=args.stride,
+        batch_size=args.batch_size,
+        sl_calculation=args.sl_calculation,
+        entry_price_type=args.entry_price_type,
+        start_index=args.start_index,
+        end_index=args.end_index,
+        return_in_points=args.return_in_points,
+    )
+    output = None
+    if args.output is not None:
+        output = str(_save_gzip_pickle(result, args.output))
+    return {
+        "command": "run_backtest",
+        "output": output,
+        "positions_total": result.positions_total,
+        "buy_count": result.buy_count,
+        "sell_count": result.sell_count,
+        "unsupported_signal_count": result.unsupported_signal_count,
+        "profit_equity_points": result.profit_equity.tolist() if args.return_in_points else None,
+        "dd_equity_points": result.dd_equity.tolist() if args.return_in_points else None,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

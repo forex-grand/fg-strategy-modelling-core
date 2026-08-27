@@ -8,6 +8,7 @@ from typing import Any, Mapping, Optional
 
 import numpy as np
 import pandas as pd
+from numba import njit
 from tqdm import tqdm
 
 from forexgrand_core.data_manager import DataManager
@@ -155,6 +156,96 @@ class SignalExtractor:
         return pd.DataFrame(rows), unsupported
 
 
+@njit(cache=True)
+def _run_core(
+    order, open_time_sorted, direction, open_price, sl, tp,
+    m_timestamps, high_bid, low_bid, high_ask, low_ask, close_col,
+    n, n_bars,
+):
+    max_profit = np.zeros(n, dtype=np.float64)
+    min_dd = np.zeros(n, dtype=np.float64)
+    close_time = np.full(n, -1, dtype=np.int64)
+    close_price = np.full(n, np.nan, dtype=np.float64)
+    profit = np.full(n, np.nan, dtype=np.float64)
+    close_reason = np.full(n, -1, dtype=np.int8)
+    status = np.zeros(n, dtype=np.int8)
+
+    profit_equity = np.zeros(n_bars, dtype=np.float64)
+    dd_equity = np.zeros(n_bars, dtype=np.float64)
+    active = np.empty(n, dtype=np.int64)
+    active_len = 0
+    activate_ptr = 0
+    bars_used = n_bars
+
+    for bar_i in range(n_bars):
+        ts = m_timestamps[bar_i]
+        hb = high_bid[bar_i]
+        lb = low_bid[bar_i]
+        ha = high_ask[bar_i]
+        la = low_ask[bar_i]
+        bar_close = close_col[bar_i]
+        pe = 0.0
+        de = 0.0
+        write = 0
+
+        for read in range(active_len):
+            pid = active[read]
+            position_direction = direction[pid]
+            if position_direction == 0:
+                mp = (hb if hb < tp[pid] else tp[pid]) - open_price[pid]
+                dd = (lb if lb > sl[pid] else sl[pid]) - open_price[pid]
+                sl_hit = lb <= sl[pid]
+                tp_hit = hb >= tp[pid]
+            else:
+                mp = open_price[pid] - (la if la > tp[pid] else tp[pid])
+                dd = open_price[pid] - (ha if ha < sl[pid] else sl[pid])
+                sl_hit = ha >= sl[pid]
+                tp_hit = la <= tp[pid]
+
+            if mp > max_profit[pid]:
+                max_profit[pid] = mp
+            if dd < min_dd[pid]:
+                min_dd[pid] = dd
+            pe += max_profit[pid]
+            de += min_dd[pid]
+
+            if sl_hit or tp_hit:
+                both = sl_hit and tp_hit
+                if both:
+                    hit_tp = (bar_close >= tp[pid]) if position_direction == 0 else (bar_close <= tp[pid])
+                else:
+                    hit_tp = tp_hit
+                price = tp[pid] if hit_tp else sl[pid]
+                status[pid] = 2
+                close_time[pid] = ts
+                close_price[pid] = price
+                profit[pid] = price - open_price[pid] if position_direction == 0 else open_price[pid] - price
+                close_reason[pid] = 3 if both else (0 if hit_tp else 1)
+            else:
+                active[write] = pid
+                write += 1
+
+        active_len = write
+        profit_equity[bar_i] = pe
+        dd_equity[bar_i] = de
+
+        while activate_ptr < n and open_time_sorted[activate_ptr] == ts:
+            pid = order[activate_ptr]
+            status[pid] = 1
+            active[active_len] = pid
+            active_len += 1
+            activate_ptr += 1
+
+        if activate_ptr >= n and active_len == 0:
+            bars_used = bar_i + 1
+            break
+
+    return (
+        max_profit, min_dd, close_time, close_price, profit, close_reason,
+        status, profit_equity, dd_equity, bars_used,
+    )
+
+
 class MarketTableBuilder:
     @staticmethod
     def build(dataframe: pd.DataFrame, point_size: float = 1.0) -> pd.DataFrame:
@@ -215,79 +306,32 @@ class BacktestEngine:
             open_price[idx], direction[idx], sl[idx], tp[idx], open_time[idx]
         )
         n = len(idx)
-        max_profit = np.zeros(n, dtype=np.float64)
-        min_dd = np.zeros(n, dtype=np.float64)
-        close_time = np.full(n, -1, dtype=np.int64)
-        close_price = np.full(n, np.nan, dtype=np.float64)
-        profit = np.full(n, np.nan, dtype=np.float64)
-        close_reason = np.full(n, -1, dtype=np.int8)
-        status = np.zeros(n, dtype=np.int8)
-
         order = np.argsort(open_time, kind="stable")
         open_time_sorted = open_time[order]
-        m_timestamps = market.index.to_numpy()
-        high_bid = market["high_bid"].to_numpy()
-        low_bid = market["low_bid"].to_numpy()
-        high_ask = market["high_ask"].to_numpy()
-        low_ask = market["low_ask"].to_numpy()
-        close_col = market["close"].to_numpy()
-        spread_col = market["spread"].to_numpy()
+        m_timestamps = market.index.to_numpy(dtype=np.int64)
+        high_bid = market["high_bid"].to_numpy(dtype=np.float64)
+        low_bid = market["low_bid"].to_numpy(dtype=np.float64)
+        high_ask = market["high_ask"].to_numpy(dtype=np.float64)
+        low_ask = market["low_ask"].to_numpy(dtype=np.float64)
+        close_col = market["close"].to_numpy(dtype=np.float64)
+        spread_col = market["spread"].to_numpy(dtype=np.float64)
         n_bars = len(market)
-        profit_equity = np.zeros(n_bars, dtype=np.float64)
-        dd_equity = np.zeros(n_bars, dtype=np.float64)
-        active = np.empty(n, dtype=np.int64)
-        active_len = 0
-        activate_ptr = 0
 
-        for bar_i in tqdm(range(n_bars), total=n_bars, desc="[BACKTEST] replaying bars", unit="bar"):
-            ts = m_timestamps[bar_i]
-            hb, lb, ha, la = high_bid[bar_i], low_bid[bar_i], high_ask[bar_i], low_ask[bar_i]
-            if active_len > 0:
-                active_ids = active[:active_len]
-                active_directions = direction[active_ids]
-                buy_ids, sell_ids = active_ids[active_directions == 0], active_ids[active_directions != 0]
-                if buy_ids.size:
-                    max_profit[buy_ids] = np.maximum(max_profit[buy_ids], np.minimum(hb, tp[buy_ids]) - open_price[buy_ids])
-                    min_dd[buy_ids] = np.minimum(min_dd[buy_ids], np.maximum(lb, sl[buy_ids]) - open_price[buy_ids])
-                if sell_ids.size:
-                    max_profit[sell_ids] = np.maximum(max_profit[sell_ids], open_price[sell_ids] - np.maximum(la, tp[sell_ids]))
-                    min_dd[sell_ids] = np.minimum(min_dd[sell_ids], open_price[sell_ids] - np.minimum(ha, sl[sell_ids]))
-                profit_equity[bar_i] = float(max_profit[active_ids].sum())
-                dd_equity[bar_i] = float(min_dd[active_ids].sum())
-
-                bar_close = close_col[bar_i]
-                still_active = []
-                for position_id in active_ids:
-                    is_buy = direction[position_id] == 0
-                    sl_hit = lb <= sl[position_id] if is_buy else ha >= sl[position_id]
-                    tp_hit = hb >= tp[position_id] if is_buy else la <= tp[position_id]
-                    if sl_hit or tp_hit:
-                        both = sl_hit and tp_hit
-                        hit_tp = (bar_close >= tp[position_id] if is_buy else bar_close <= tp[position_id]) if both else tp_hit
-                        price = tp[position_id] if hit_tp else sl[position_id]
-                        status[position_id] = 2
-                        close_time[position_id] = ts
-                        close_price[position_id] = price
-                        profit[position_id] = price - open_price[position_id] if is_buy else open_price[position_id] - price
-                        close_reason[position_id] = 3 if both else (0 if hit_tp else 1)
-                    else:
-                        still_active.append(position_id)
-                active_len = len(still_active)
-                active[:active_len] = still_active
-            else:
-                profit_equity[bar_i] = 0.0
-                dd_equity[bar_i] = 0.0
-
-            while activate_ptr < n and open_time_sorted[activate_ptr] == ts:
-                position_id = order[activate_ptr]
-                status[position_id] = 1
-                active[active_len] = position_id
-                active_len += 1
-                activate_ptr += 1
-            if activate_ptr >= n and active_len == 0:
-                profit_equity = profit_equity[:bar_i + 1]
-                dd_equity = dd_equity[:bar_i + 1]
-                break
+        replay_progress = tqdm(total=n_bars, desc="[BACKTEST] replaying bars", unit="bar")
+        try:
+            (
+                max_profit, min_dd, close_time, close_price, profit, close_reason,
+                status, profit_equity, dd_equity, bars_used,
+            ) = _run_core(
+                order, open_time_sorted, direction, open_price, sl, tp,
+                m_timestamps, high_bid, low_bid, high_ask, low_ask, close_col,
+                n, n_bars,
+            )
+            replay_progress.update(n_bars)
+        finally:
+            replay_progress.close()
+        profit_equity = profit_equity[:bars_used]
+        dd_equity = dd_equity[:bars_used]
 
         remaining = np.nonzero(status != 2)[0]
         if remaining.size:
@@ -361,8 +405,41 @@ def _load_strategy(path: str | Path, sequence_length: int) -> Any:
         raise StrategyLoadError(f"Could not initialize strategy: {error}") from error
 
 
-def run_backtest(strategy_path: str | Path, *, bucket_name: str, source: str, symbol_pair: str, instrument_group: Optional[str] = None, sequence_length: int = 60, stride: int = 1, batch_size: int = 1024, sl_calculation: Optional[Mapping[str, Any]] = None, entry_price_type: str = "bid", start_index: int = 0, end_index: int = -1) -> BacktestResult:
-    """Run a strategy against a DataManager-compatible OHLC dataframe."""
+def run_backtest(strategy_path: str | Path, *, bucket_name: str, source: str, symbol_pair: str, instrument_group: Optional[str] = None, sequence_length: int = 60, stride: int = 1, batch_size: int = 1024, sl_calculation: Optional[Mapping[str, Any]] = None, entry_price_type: str = "bid", start_index: int = 0, end_index: int = -1, return_in_points: bool = False) -> BacktestResult:
+    """Run a strategy against DataManager-compatible OHLC data.
+
+    Args:
+        strategy_path: Python file containing one ``PreprocessBase`` strategy.
+        bucket_name: Storage bucket used by ``DataManager``.
+        source: Market-data source name passed to ``DataManager``.
+        symbol_pair: Symbol to backtest, for example ``"EURUSD"``.
+        instrument_group: Optional data group, for example ``"forex_majors"``.
+        sequence_length: Number of bars supplied to the strategy per window.
+        stride: Number of bars between consecutive strategy windows.
+        batch_size: Number of windows sent to the strategy at a time.
+        sl_calculation: SL/TP mode configuration. ``None`` uses fixed mode with
+            ``sl_points=100`` and ``tp_points=100``. For ``mode="fixed"``,
+            accepted keys are ``mode``, ``sl_points`` and ``tp_points``; both
+            point values default to ``100``. For ``mode="range"``, accepted
+            keys are ``mode``, ``range``, ``sl_ratio`` and ``tp_ratio``; the
+            defaults are ``range=60``, ``sl_ratio=1.0`` and ``tp_ratio=1.0``.
+            For ``mode="atr"``, accepted keys are ``mode``,
+            ``sl_multiplier``, ``tp_multiplier`` and ``atr_period``; the
+            defaults are ``sl_multiplier=3.0``, ``tp_multiplier=3.0`` and
+            ``atr_period=14``. Unknown keys or unsupported modes raise
+            ``ValueError``. Point distances are converted using the symbol's
+            ``point_size`` from its instrument properties.
+        entry_price_type: Entry convention: ``"bid"`` (default), ``"ask"``,
+            or ``"mid"``.
+        start_index: Inclusive starting row in the normalized market table.
+        end_index: Exclusive ending row; ``-1`` (default) means the final row.
+        return_in_points: If true, divide position profit/drawdown fields and
+            both equity curves by the symbol point size. Price fields remain
+            in price units.
+
+    Returns:
+        A ``BacktestResult`` containing positions, equity curves, and counts.
+    """
     print("[BACKTEST] loading market data", flush=True)
     properties = None
     dm = DataManager(base_bucket_name=bucket_name, source=source)
@@ -383,4 +460,19 @@ def run_backtest(strategy_path: str | Path, *, bucket_name: str, source: str, sy
     signals, unsupported = SignalExtractor(strategy, sequence_length, batch_size, entry_price_type, stride).extract(market)
     print(f"[BACKTEST] extracted {len(signals)} supported signals", flush=True)
     print("[BACKTEST] running engine", flush=True)
-    return BacktestEngine(SLTPCalculator(sl_calculation, point_size)).run(signals, market, unsupported)
+    result = BacktestEngine(SLTPCalculator(sl_calculation, point_size)).run(signals, market, unsupported)
+    if not return_in_points:
+        return result
+
+    positions = result.positions.copy()
+    for column in ("max_profit", "min_dd", "profit"):
+        positions[column] = positions[column] / point_size
+    return BacktestResult(
+        positions,
+        result.profit_equity / point_size,
+        result.dd_equity / point_size,
+        result.positions_total,
+        result.buy_count,
+        result.sell_count,
+        result.unsupported_signal_count,
+    )
