@@ -1,9 +1,8 @@
 """Signal-level bar replay backtesting."""
 from __future__ import annotations
 
-import importlib.util
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Mapping, Optional
 
 import numpy as np
@@ -12,11 +11,22 @@ from numba import njit
 from tqdm import tqdm
 
 from forexgrand_core.data_manager import DataManager
-from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
-
-
 class StrategyLoadError(ValueError):
-    """Raised when a strategy module cannot be loaded or validated."""
+    """Raised when a strategy class cannot be instantiated or validated."""
+
+
+class SignalsBase(ABC):
+    """Base class for strategies that generate signals from bar windows."""
+
+    def __init__(self, sequence_length: int) -> None:
+        if sequence_length <= 0:
+            raise ValueError("sequence_length must be positive")
+        self.sequence_length = sequence_length
+
+    @abstractmethod
+    def signals(self, batch: Mapping[str, np.ndarray]) -> Any:
+        """Return one direction per window: 0=buy, 1=sell, otherwise no trade."""
+        raise NotImplementedError
 
 
 # =====================================================================
@@ -300,11 +310,13 @@ class SLTPCalculator:
 
 
 class SignalExtractor:
-    def __init__(self, strategy: Any, sequence_length: int, batch_size: int = 1024, entry_price_type: str = "bid", stride: int = 1) -> None:
+    def __init__(self, strategy: SignalsBase, sequence_length: int, batch_size: int = 1024, entry_price_type: str = "bid", stride: int = 1) -> None:
         if sequence_length <= 0 or batch_size <= 0 or stride <= 0:
             raise ValueError("sequence_length, batch_size, and stride must be positive.")
         if entry_price_type not in {"bid", "ask", "mid"}:
             raise ValueError("entry_price_type must be 'bid', 'ask', or 'mid'.")
+        if not isinstance(strategy, SignalsBase):
+            raise StrategyLoadError("strategy must be an instance of a SignalsBase subclass.")
         self.strategy, self.sequence_length = strategy, sequence_length
         self.batch_size, self.entry_price_type, self.stride = batch_size, entry_price_type, stride
 
@@ -314,9 +326,6 @@ class SignalExtractor:
             return pd.DataFrame(), 0
         window_starts = np.arange(0, count, self.stride)
         window_count = len(window_starts)
-        method = next((getattr(self.strategy, name, None) for name in ("generate_signals", "signals", "predict") if callable(getattr(self.strategy, name, None))), None)
-        if method is None:
-            raise StrategyLoadError("Strategy must expose generate_signals(batch).")
         chunks = []
         columns = ("_timestamp", "open", "high", "low", "close", "spread", "real_volume", "tick_volume")
         print(f"[BACKTEST] extracting {window_count} windows in batches of {self.batch_size}", flush=True)
@@ -334,7 +343,7 @@ class SignalExtractor:
                 )
                 for column in columns
             }
-            result = method(batch)
+            result = self.strategy.signals(batch)
             values = np.asarray(result.get("direction") if isinstance(result, Mapping) else result)
             if values.ndim != 1 or len(values) != end - start:
                 raise ValueError("Strategy directions must contain one value per input window.")
@@ -593,23 +602,13 @@ class BacktestEngine:
         )
 
 
-def _load_strategy(path: str | Path, sequence_length: int) -> Any:
-    module_path = Path(path)
-    spec = importlib.util.spec_from_file_location("fg_backtest_strategy", module_path)
-    if spec is None or spec.loader is None:
-        raise StrategyLoadError(f"Cannot load strategy file: {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(module)
-    except Exception as error:
-        raise StrategyLoadError(f"Could not import strategy {module_path}: {error}") from error
-    classes = [value for value in vars(module).values() if isinstance(value, type) and issubclass(value, PreprocessBase) and value is not PreprocessBase]
-    if len(classes) != 1:
-        raise StrategyLoadError("Strategy file must define exactly one PreprocessBase subclass.")
-    try:
-        return classes[0](sequence_length=sequence_length)
-    except Exception as error:
-        raise StrategyLoadError(f"Could not initialize strategy: {error}") from error
+def _validate_strategy(strategy: SignalsBase) -> SignalsBase:
+    if not isinstance(strategy, SignalsBase):
+        raise StrategyLoadError(
+            "strategy must be an instance of a SignalsBase subclass "
+            "(construct it yourself, e.g. MyStrategy(sequence_length=60, ...))."
+        )
+    return strategy
 
 
 def _percentage_result(result: BacktestResult) -> BacktestResult:
@@ -656,7 +655,7 @@ def _statistics_input(result: BacktestResult, percentage: bool = False) -> dict[
 
 
 def run_backtest(
-    strategy_path: str | Path,
+    strategy: SignalsBase,
     *,
     bucket_name: str,
     source: str,
@@ -677,7 +676,9 @@ def run_backtest(
     """Run a strategy against DataManager-compatible OHLC data.
 
     Args:
-        strategy_path: Python file containing one ``PreprocessBase`` strategy.
+        strategy: An already-constructed instance of a concrete ``SignalsBase``
+            subclass implementing ``signals(batch)``. Its ``sequence_length``
+            controls the input window length.
         bucket_name: Storage bucket used by ``DataManager``.
         source: Market-data source name passed to ``DataManager``.
         symbol_pair: Symbol to backtest, for example ``"EURUSD"``.
@@ -732,8 +733,8 @@ def run_backtest(
         raise ValueError("end_index must be -1 or greater.")
     market = market.iloc[start_index:] if end_index == -1 else market.iloc[start_index:end_index]
     print(f"[BACKTEST] selected market rows {start_index}:{end_index}", flush=True)
-    print("[BACKTEST] loading strategy", flush=True)
-    strategy = _load_strategy(strategy_path, sequence_length)
+    strategy = _validate_strategy(strategy)
+    sequence_length = strategy.sequence_length
     print("[BACKTEST] extracting signals", flush=True)
     signals, unsupported = SignalExtractor(strategy, sequence_length, batch_size, entry_price_type, stride).extract(market)
     print(f"[BACKTEST] extracted {len(signals)} supported signals", flush=True)

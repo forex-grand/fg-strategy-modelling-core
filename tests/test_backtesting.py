@@ -5,11 +5,12 @@ import pandas as pd
 import forexgrand_core.backtesting as backtesting
 
 
-class FakeStrategy:
-    def __init__(self):
+class FakeStrategy(backtesting.SignalsBase):
+    def __init__(self, sequence_length=2):
+        super().__init__(sequence_length)
         self.batch_times = []
 
-    def generate_signals(self, batch):
+    def signals(self, batch):
         self.batch_times.extend(batch["time"][:, -1].tolist())
         return [0] * len(batch["time"])
 
@@ -53,14 +54,11 @@ def test_run_backtest_limits_market_to_requested_indexes(monkeypatch):
             return data, SimpleNamespace(point_size=1.0)
 
     monkeypatch.setattr(backtesting, "DataManager", FakeDataManager)
-    monkeypatch.setattr(backtesting, "_load_strategy", lambda *args: strategy)
-
     result = backtesting.run_backtest(
-        "strategy.py",
+        strategy,
         bucket_name="bucket",
         source="source",
         symbol_pair="EURUSD",
-        sequence_length=2,
         start_index=1,
         end_index=4,
         sl_calculation={"mode": "fixed", "sl_points": 100, "tp_points": 100},
@@ -74,11 +72,10 @@ def test_run_backtest_limits_market_to_requested_indexes(monkeypatch):
 
     strategy.batch_times.clear()
     result = backtesting.run_backtest(
-        "strategy.py",
+        strategy,
         bucket_name="bucket",
         source="source",
         symbol_pair="EURUSD",
-        sequence_length=2,
         sl_calculation={"mode": "fixed", "sl_points": 100, "tp_points": 100},
     )
 
@@ -106,14 +103,11 @@ def test_run_backtest_returns_current_trade_result_contract(monkeypatch):
             return data, SimpleNamespace(point_size=0.1)
 
     monkeypatch.setattr(backtesting, "DataManager", FakeDataManager)
-    monkeypatch.setattr(backtesting, "_load_strategy", lambda *args: strategy)
-
     result = backtesting.run_backtest(
-        "strategy.py",
+        strategy,
         bucket_name="bucket",
         source="source",
         symbol_pair="EURUSD",
-        sequence_length=2,
         sl_calculation={"mode": "fixed", "sl_points": 100, "tp_points": 100},
         return_in_points=True,
     )
