@@ -7,25 +7,9 @@ for focused testing and custom workflows. The training-data generator is now
 available from `forexgrand_core.generate_train_data` (the old pipeline import
 remains as a compatibility path).
 
-For a runnable example and strategy-file contract, see the **Backtest A
-Strategy** section in `README.md`.
-
-The same workflow is available from the CLI:
-
-```bash
-fg_core run_backtest my_strategy.py EURUSD \
-  --bucket forexgrand-test --source dukascopy \
-  --instrument-group forex_majors --sequence-length 60 --stride 5 \
-  --sl-calculation '{"mode":"fixed","sl_points":100,"tp_points":150}' \
-  --return-in-points --output result.pkl.gz
-```
-
-The Python entry point is `run_backtest(strategy_path, *, bucket_name, source,
-symbol_pair, instrument_group=None, sequence_length=60, stride=1,
-batch_size=1024, sl_calculation=None, entry_price_type="bid", start_index=0,
-end_index=-1, return_in_points=False)`. When `return_in_points=True`, position
-profit/drawdown fields and both equity curves are divided by the symbol point
-size; price fields remain in price units.
+For the current Python API and strategy contract, see the **Backtest A Strategy**
+section in `README.md`. CLI backtesting is temporarily unavailable while the
+strategy interface is being migrated to instance-based execution.
 
 The original design details follow for reference.
 

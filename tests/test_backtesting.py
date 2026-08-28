@@ -127,7 +127,8 @@ def test_run_backtest_returns_current_trade_result_contract(monkeypatch):
         1704067380,
         1704067440,
     ]
-    assert result.balance_equity.tolist() == [10000.0] * 5
+    assert result.balance_equity.tolist() == [10000.0, 10000.0, 10000.0, 10000.0, 10060.0]
+    assert result.final_balance == 10060.0
     assert result.profit_equity.equals(result.balance_equity)
     assert result.dd_equity.equals(result.balance_equity - result.equity_curve)
     assert result.positions["sl"].iloc[0] == -998.0

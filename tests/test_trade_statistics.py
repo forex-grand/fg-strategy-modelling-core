@@ -130,3 +130,26 @@ def test_trade_time_field_selects_period_category():
     assert close_stats["meta"]["trade_time_field"] == "close_time"
     assert [row["num_trades"] for row in open_stats["trade_count_stats"]["monthly"]] == [1, 1]
     assert [row["num_trades"] for row in close_stats["trade_count_stats"]["monthly"]] == [2]
+
+
+def test_net_profit_percentage_sums_trade_returns_not_absolute_profit():
+    start = int(pd.Timestamp("2024-01-01", tz="UTC").timestamp())
+    positions = pd.DataFrame(
+        {
+            "profit": [200.0, -100.0],
+            "time_spent": [60.0, 60.0],
+            "open_time": [start, start + 60],
+            "close_time": [start + 60, start + 120],
+        }
+    )
+    data = {
+        "positions": positions,
+        "equity": [1000.0, 1200.0, 1100.0],
+        "balance": [1000.0, 1200.0, 1100.0],
+        "equity_time": [start, start + 60, start + 120],
+    }
+
+    trade_profit = TradeStatisticsEngine(n_mc_sims=1).compute(data)["trade_profit_stats"]
+
+    assert trade_profit["net_profit_abs"] == 100.0
+    assert trade_profit["net_profit_pct"] == (20.0 - (100.0 / 1200.0 * 100.0))

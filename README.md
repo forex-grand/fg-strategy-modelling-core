@@ -38,8 +38,6 @@ Installing the package provides an `fg_core` command with data workflow subcomma
 fg_core download_data EURUSD forex --bucket forexgrand-data --source mt5
 fg_core generate_train_data EURUSD forex --sequence-length 2800 --stride 100
 fg_core preprocess_data prices.parquet preprocess.py --output data/processed.pkl.gz
-fg_core run_backtest my_strategy.py EURUSD --bucket forexgrand-test --source dukascopy \
-    --instrument-group forex_majors --sequence-length 60 --stride 5
 ```
 
 `preprocess.py` must define `preprocess_fn(dataframe)`. The input can be CSV, Parquet,
@@ -154,15 +152,16 @@ data_gen.load_data(..., source="metaquotes")
 
 ## Backtest A Strategy
 
-Backtesting uses the same OHLC columns returned by `DataManager`. A strategy file
-must define one `PreprocessBase` subclass with `generate_signals(batch)` returning
-one direction per input window: `0` for buy, `1` for sell, or `2` for no trade.
+Backtesting currently uses the Python API only. The CLI backtest command is
+temporarily unavailable. Pass an instance of `SignalsBase` to `run_backtest`;
+its `signals(batch)` method returns one direction per input window: `0` for buy,
+`1` for sell, or `2` for no trade.
 
 ```python
 from forexgrand_core.backtesting import run_backtest
 
 result = run_backtest(
-    "my_strategy.py",
+    strategy=my_strategy,
     bucket_name="forexgrand-test",
     source="dukascopy",
     symbol_pair="EURUSD",

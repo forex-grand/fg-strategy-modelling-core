@@ -561,6 +561,10 @@ class BacktestEngine:
             profit[remaining] = lots[remaining] * (remaining_price_diff / point_size)
             close_reason[remaining] = 2
             status[remaining] = 2
+            final_balance += float(profit[remaining].sum())
+            if len(balance_equity):
+                balance_equity[-1] = final_balance
+                equity_curve[-1] = final_balance
 
         reason_map = {0: "tp", 1: "sl", 2: "eod", 3: "tiebreak", -1: None}
         positions = pd.DataFrame({
@@ -742,12 +746,14 @@ def run_backtest(
     selection = result_type or ResultType()
     if not isinstance(selection, ResultType):
         raise TypeError("result_type must be created with RESULT_TYPE(...)")
-    if selection.return_percent:
-        result = _percentage_result(result)
+    computed = None
     if selection.type in {statistics_only, trade_result_and_statistics}:
         from forexgrand_core.trade_statistics import compute_statistics
-        computed = compute_statistics(_statistics_input(result, selection.return_percent))
+        computed = compute_statistics(_statistics_input(result))
         if selection.type == statistics_only:
             return computed
+    if selection.return_percent:
+        result = _percentage_result(result)
+    if computed is not None:
         result.statistics = computed
     return result
