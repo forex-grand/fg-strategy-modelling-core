@@ -192,7 +192,7 @@ def compute_trade_profit_stats(positions, idx, equity, balance, equity_time, max
 
 
 def compute_position_sizing_stats(positions, idx, qs=DEFAULT_QUANTILES):
-    column = next((c for c in ("size", "volume", "lots", "position_size") if c in positions), None)
+    column = next((c for c in ("lot", "size", "volume", "lots", "position_size") if c in positions), None)
     if column is None: return None
     values = positions[column].to_numpy(float); return {"column_used": column, "all": quantiles(values, qs), "win": quantiles(values[idx["win_idx"]], qs), "loss": quantiles(values[idx["loss_idx"]], qs)}
 

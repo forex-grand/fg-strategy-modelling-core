@@ -153,3 +153,13 @@ def test_net_profit_percentage_sums_trade_returns_not_absolute_profit():
 
     assert trade_profit["net_profit_abs"] == 100.0
     assert trade_profit["net_profit_pct"] == (20.0 - (100.0 / 1200.0 * 100.0))
+
+
+def test_position_sizing_stats_accept_backtest_lot_column():
+    data = make_synthetic_data(n_trades=2)
+    data["positions"] = data["positions"].drop(columns="size").assign(lot=[0.5, 1.25])
+
+    stats = TradeStatisticsEngine(n_mc_sims=1).compute(data)
+
+    assert stats["position_sizing_stats"]["column_used"] == "lot"
+    assert stats["position_sizing_stats"]["all"]["p50"] == 0.875
