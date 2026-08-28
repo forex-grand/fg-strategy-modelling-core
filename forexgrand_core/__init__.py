@@ -60,12 +60,14 @@ def __getattr__(name):
     elif name == "GenerateTrainData":
         from forexgrand_core.generate_train_data import GenerateTrainData
         return GenerateTrainData
-    elif name in {"BacktestResult", "SLTPCalculator", "SignalExtractor", "MarketTableBuilder", "BacktestEngine", "StrategyLoadError", "run_backtest", "FIXED_LOT", "PERCENTAGE", "MARTINGALE", "ANTIMARTINGALE", "FIXED_SLTP", "RANGE", "ATR", "LOTSIZERS", "SLTP_MODES"}:
+    elif name in {"BacktestResult", "ResultType", "RESULT_TYPE", "trade_result_only", "statistics_only", "trade_result_and_statistics", "trade_result", "statistics", "SLTPCalculator", "SignalExtractor", "MarketTableBuilder", "BacktestEngine", "StrategyLoadError", "run_backtest", "FIXED_LOT", "PERCENTAGE", "MARTINGALE", "ANTIMARTINGALE", "FIXED_SLTP", "RANGE", "ATR", "LOTSIZERS", "SLTP_MODES"}:
         from forexgrand_core.backtesting import (
             ANTIMARTINGALE, ATR, FIXED_LOT, FIXED_SLTP, LOTSIZERS, MARTINGALE,
             PERCENTAGE, RANGE, SLTP_MODES, BacktestEngine, BacktestResult,
-            MarketTableBuilder, SLTPCalculator, SignalExtractor,
-            StrategyLoadError, run_backtest,
+            MarketTableBuilder, RESULT_TYPE, ResultType, SLTPCalculator,
+            SignalExtractor, StrategyLoadError, run_backtest, statistics,
+            statistics_only, trade_result, trade_result_and_statistics,
+            trade_result_only,
         )
         return locals()[name]
     elif name == "Evaluator":
@@ -83,6 +85,13 @@ __all__ = [
     "GenerateTrainData",
     "Evaluator",
     "BacktestResult",
+    "ResultType",
+    "RESULT_TYPE",
+    "trade_result_only",
+    "statistics_only",
+    "trade_result_and_statistics",
+    "trade_result",
+    "statistics",
     "SLTPCalculator",
     "SignalExtractor",
     "MarketTableBuilder",

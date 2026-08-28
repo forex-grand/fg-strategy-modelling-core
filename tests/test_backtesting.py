@@ -86,7 +86,7 @@ def test_run_backtest_limits_market_to_requested_indexes(monkeypatch):
     assert len(result.profit_equity) == 5
 
 
-def test_run_backtest_can_return_profit_and_drawdown_in_points(monkeypatch):
+def test_run_backtest_returns_current_trade_result_contract(monkeypatch):
     data = pd.DataFrame(
         {
             "time": pd.date_range("2024-01-01", periods=5, freq="min"),
@@ -119,8 +119,15 @@ def test_run_backtest_can_return_profit_and_drawdown_in_points(monkeypatch):
     )
 
     assert result.positions["profit"].tolist() == [30.0, 20.0, 10.0, 0.0]
-    assert result.positions["max_profit"].tolist() == [30.0, 20.0, 10.0, 0.0]
-    assert result.positions["min_dd"].tolist() == [0.0, 0.0, 0.0, 0.0]
-    assert result.profit_equity.tolist() == [0.0, 0.0, 10.0, 30.0, 60.0]
-    assert result.dd_equity.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0]
+    assert result.positions["time_spent"].tolist() == [180, 120, 60, 0]
+    assert result.positions["close_reason"].tolist() == ["eod"] * 4
+    assert result.positions.index.tolist() == [
+        1704067260,
+        1704067320,
+        1704067380,
+        1704067440,
+    ]
+    assert result.balance_equity.tolist() == [10000.0] * 5
+    assert result.profit_equity.equals(result.balance_equity)
+    assert result.dd_equity.equals(result.balance_equity - result.equity_curve)
     assert result.positions["sl"].iloc[0] == -998.0

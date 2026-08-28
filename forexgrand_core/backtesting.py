@@ -132,6 +132,34 @@ LOTSIZERS = [
 ]
 
 
+trade_result_only = "trade_result"
+statistics_only = "statistics"
+trade_result_and_statistics = "trade_result_and_statistics"
+# Short aliases make the public factory pleasant to use from this module.
+trade_result = trade_result_only
+statistics = statistics_only
+
+
+@dataclass(frozen=True)
+class ResultType:
+    """Select the backtest payload and whether monetary values are percentages."""
+
+    type: str = trade_result_only
+    return_percent: bool = False
+
+    def __post_init__(self) -> None:
+        if self.type not in {trade_result_only, statistics_only, trade_result_and_statistics}:
+            raise ValueError(
+                "type must be 'trade_result', 'statistics', or "
+                "'trade_result_and_statistics'"
+            )
+
+
+def RESULT_TYPE(type: str = trade_result_only, return_percent: bool = False) -> ResultType:
+    """Build a result selection, for example ``RESULT_TYPE(statistics)``."""
+    return ResultType(type=type, return_percent=return_percent)
+
+
 @njit(cache=True, inline="always")
 def _round2(x: float) -> float:
     return np.floor(x * 100.0 + 0.5) / 100.0
@@ -197,9 +225,20 @@ class BacktestResult:
     sell_count: int
     unsupported_signal_count: int
     final_balance: float
+    statistics: Optional[dict[str, Any]] = None
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
+
+    @property
+    def profit_equity(self) -> pd.Series:
+        """Compatibility alias for the realized balance curve."""
+        return self.balance_equity
+
+    @property
+    def dd_equity(self) -> pd.Series:
+        """Compatibility alias for floating drawdown relative to balance."""
+        return self.balance_equity - self.equity_curve
 
 
 class SLTPCalculator:
@@ -533,6 +572,7 @@ class BacktestEngine:
             "tp": tp,
             "lot": lots,
             "close_time": pd.array(close_time, dtype="Int64"),
+            "time_spent": close_time - open_time,
             "close_price": close_price,
             "profit": profit,
             "close_reason": pd.Categorical([reason_map[code] for code in close_reason]),
@@ -568,6 +608,49 @@ def _load_strategy(path: str | Path, sequence_length: int) -> Any:
         raise StrategyLoadError(f"Could not initialize strategy: {error}") from error
 
 
+def _percentage_result(result: BacktestResult) -> BacktestResult:
+    """Convert realized P&L and curves to percentage returns from their base."""
+    from forexgrand_core.trade_statistics import lookup_value_at_time
+
+    balance = result.balance_equity.to_numpy(dtype=float)
+    initial = float(balance[0]) if len(balance) else 0.0
+    positions = result.positions.copy()
+    if len(positions) and len(balance):
+        open_times = positions.index.to_numpy(dtype=np.int64)
+        base = lookup_value_at_time(
+            open_times,
+            result.balance_equity.index.to_numpy(dtype=np.int64),
+            balance,
+        )
+        positions["profit"] = np.where(base != 0, positions["profit"] / base * 100.0, np.nan)
+    if initial:
+        balance_curve = (result.balance_equity - initial) / initial * 100.0
+        equity_curve = (result.equity_curve - initial) / initial * 100.0
+    else:
+        balance_curve = result.balance_equity * np.nan
+        equity_curve = result.equity_curve * np.nan
+    return BacktestResult(
+        positions, balance_curve, equity_curve, result.positions_total,
+        result.buy_count, result.sell_count, result.unsupported_signal_count,
+        result.final_balance, result.statistics,
+    )
+
+
+def _statistics_input(result: BacktestResult, percentage: bool = False) -> dict[str, Any]:
+    positions = result.positions.reset_index()
+    positions = positions.rename(columns={positions.columns[0]: "open_time"})
+    equity = result.equity_curve.to_numpy(dtype=float)
+    balance = result.balance_equity.to_numpy(dtype=float)
+    if percentage:
+        equity, balance = equity + 100.0, balance + 100.0
+    return {
+        "positions": positions,
+        "equity": equity,
+        "balance": balance,
+        "equity_time": result.equity_curve.index.to_numpy(dtype=np.int64),
+    }
+
+
 def run_backtest(
     strategy_path: str | Path,
     *,
@@ -584,7 +667,9 @@ def run_backtest(
     entry_price_type: str = "bid",
     start_index: int = 0,
     end_index: int = -1,
-) -> BacktestResult:
+    result_type: Optional[ResultType] = None,
+    return_in_points: bool = False,
+) -> Any:
     """Run a strategy against DataManager-compatible OHLC data.
 
     Args:
@@ -620,6 +705,11 @@ def run_backtest(
             or ``"mid"``.
         start_index: Inclusive starting row in the normalized market table.
         end_index: Exclusive ending row; ``-1`` (default) means the final row.
+        result_type: ``RESULT_TYPE(...)`` selection. Defaults to trade results.
+            Use ``RESULT_TYPE(statistics)`` for statistics only or
+            ``RESULT_TYPE(trade_result_and_statistics)`` for both.
+        return_in_points: Deprecated compatibility option. Point conversion is
+            already represented by the backtest's monetary P&L contract.
     Returns:
         A ``BacktestResult`` containing positions, equity curves, counts, and
         final realized balance.
@@ -644,8 +734,20 @@ def run_backtest(
     signals, unsupported = SignalExtractor(strategy, sequence_length, batch_size, entry_price_type, stride).extract(market)
     print(f"[BACKTEST] extracted {len(signals)} supported signals", flush=True)
     print("[BACKTEST] running engine", flush=True)
-    return BacktestEngine(
+    result = BacktestEngine(
         SLTPCalculator(sl_calculation, point_size),
         lot_sizing=lot_sizing,
         initial_balance=initial_balance,
     ).run(signals, market, unsupported)
+    selection = result_type or ResultType()
+    if not isinstance(selection, ResultType):
+        raise TypeError("result_type must be created with RESULT_TYPE(...)")
+    if selection.return_percent:
+        result = _percentage_result(result)
+    if selection.type in {statistics_only, trade_result_and_statistics}:
+        from forexgrand_core.trade_statistics import compute_statistics
+        computed = compute_statistics(_statistics_input(result, selection.return_percent))
+        if selection.type == statistics_only:
+            return computed
+        result.statistics = computed
+    return result
