@@ -73,14 +73,28 @@ def test_synthetic_statistics_smoke():
     stats = TradeStatisticsEngine(n_mc_sims=2000, mc_seed=7).compute(data)
 
     assert stats["meta"]["n_trades"] == 4000
-    win_idx = stats["indexes"]["win_idx"]
-    loss_idx = stats["indexes"]["loss_idx"]
-    assert len(win_idx) + len(loss_idx) == 4000
-    assert set(win_idx.tolist()).isdisjoint(set(loss_idx.tolist()))
+    assert "indexes" not in stats
+
+    def contains_array(value):
+        if isinstance(value, np.ndarray):
+            return True
+        if isinstance(value, dict):
+            return any(contains_array(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains_array(item) for item in value)
+        return False
+
+    assert not contains_array(stats)
 
     drawdowns = stats["drawdown_stats"]
     assert drawdowns["balance_dd"]["max_dd_abs"] >= 0
     assert drawdowns["relative_dd"]["max_dd_abs"] >= 0
+    assert all(not isinstance(value, np.ndarray) for value in drawdowns.values())
+    assert all(
+        not isinstance(value, np.ndarray)
+        for section in (drawdowns["balance_dd"], drawdowns["relative_dd"])
+        for value in section.values()
+    )
 
     trade_profit = stats["trade_profit_stats"]
     assert abs(
@@ -91,6 +105,7 @@ def test_synthetic_statistics_smoke():
 
     streaks = stats["streak_stats"]
     assert streaks["num_win_streaks"] + streaks["num_loss_streaks"] > 0
+    assert not {"start_idx", "end_idx", "streak_type"} & streaks.keys()
     assert stats["position_sizing_stats"]["column_used"] == "size"
     assert stats["trade_profit_stats"]["trade_risk_column_used"] == "risk"
     assert stats["trade_efficiency_stats"] is not None
@@ -163,3 +178,6 @@ def test_position_sizing_stats_accept_backtest_lot_column():
 
     assert stats["position_sizing_stats"]["column_used"] == "lot"
     assert stats["position_sizing_stats"]["all"]["p50"] == 0.875
+    assert stats["position_sizing_stats"]["all"]["min_value"] == 0.5
+    assert stats["position_sizing_stats"]["all"]["average_value"] == 0.875
+    assert stats["position_sizing_stats"]["all"]["maximum_value"] == 1.25

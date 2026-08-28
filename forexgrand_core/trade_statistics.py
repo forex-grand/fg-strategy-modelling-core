@@ -34,7 +34,10 @@ def quantiles(values, qs=DEFAULT_QUANTILES, abs_value=False):
     values = values[np.isfinite(values)]
     if abs_value:
         values = np.abs(values)
-    return {f"p{q}": float(np.percentile(values, q)) if values.size else float("nan") for q in qs}
+    return {"min_value": float(values.min()) if values.size else float("nan"),
+            "average_value": float(values.mean()) if values.size else float("nan"),
+            "maximum_value": float(values.max()) if values.size else float("nan"),
+            **{f"p{q}": float(np.percentile(values, q)) if values.size else float("nan") for q in qs}}
 
 
 def safe_divide(a, b, default=0.0):
@@ -134,13 +137,12 @@ def compute_drawdown_stats(equity, balance, equity_time):
         starts, troughs, ends, peaks, lows = _walk_drawdown(values)
         absolute = peaks - lows; pct = np.where(peaks != 0, absolute / peaks * 100, np.nan)
         recovered = ends >= 0; end_times = np.where(recovered, equity_time[np.maximum(ends, 0)], -1)
-        return {"count": len(starts), "recovered_count": int(recovered.sum()), "start_idx": starts, "trough_idx": troughs,
-                "end_idx": ends, "dd_abs": absolute, "dd_pct": pct, "dd_pct_quantiles": quantiles(pct, DD_QUANTILES),
+        return {"count": len(starts), "recovered_count": int(recovered.sum()), "dd_pct_quantiles": quantiles(pct, DD_QUANTILES),
                 "time_to_trough_quantiles": quantiles(equity_time[troughs] - equity_time[starts]),
                 "time_to_recover_quantiles": quantiles((end_times - equity_time[troughs])[recovered], RECOVERY_QUANTILES),
                 "max_dd_abs": float(absolute.max()) if len(absolute) else float("nan"),
                 "max_dd_pct": float(np.nanmax(pct)) if len(pct) else float("nan")}
-    return {"balance_dd": one(balance, "balance"), "relative_dd": _relative_dd(equity, balance, equity_time), "running_peak_balance": np.maximum.accumulate(balance)}
+    return {"balance_dd": one(balance, "balance"), "relative_dd": _relative_dd(equity, balance, equity_time)}
 
 
 def _relative_dd(equity, balance, times):
@@ -151,8 +153,7 @@ def _relative_dd(equity, balance, times):
     peak_ref = np.maximum.accumulate(balance)[starts] if len(starts) else np.array([], dtype=float)
     recovered = ends >= 0; end_times = np.where(recovered, times[np.maximum(ends, 0)], -1)
     pct = np.where(peak_ref != 0, maximum / peak_ref * 100, np.nan)
-    return {"count": len(starts), "recovered_count": int(recovered.sum()), "start_idx": starts, "extreme_idx": extremes, "end_idx": ends,
-            "dd_abs": maximum, "dd_pct": pct, "dd_pct_quantiles": quantiles(pct, DD_QUANTILES),
+    return {"count": len(starts), "recovered_count": int(recovered.sum()), "dd_pct_quantiles": quantiles(pct, DD_QUANTILES),
             "time_to_extreme_quantiles": quantiles(times[extremes] - times[starts]),
             "time_to_recover_quantiles": quantiles((end_times - times[extremes])[recovered], RECOVERY_QUANTILES),
             "max_dd_abs": float(maximum.max()) if len(maximum) else float("nan"), "max_dd_pct": float(np.nanmax(pct)) if len(pct) else float("nan")}
@@ -204,8 +205,7 @@ def compute_streak_stats(positions, equity_time, balance, qs=DEFAULT_QUANTILES, 
         return {"num_win_streaks": 0, "num_loss_streaks": 0, "max_win_streak": 0, "max_loss_streak": 0,
                 "win_streak_length_quantiles": quantiles(empty, qs), "loss_streak_length_quantiles": quantiles(empty, qs),
                 "win_streak_profit_abs_quantiles": quantiles(empty, qs), "loss_streak_profit_abs_quantiles": quantiles(empty, qs, True),
-                "win_streak_duration_quantiles": quantiles(empty, qs), "loss_streak_duration_quantiles": quantiles(empty, qs),
-                "start_idx": empty, "end_idx": empty, "streak_type": empty}
+                "win_streak_duration_quantiles": quantiles(empty, qs), "loss_streak_duration_quantiles": quantiles(empty, qs)}
     lengths = ends - starts + 1; sums = np.asarray([profit[start:end + 1].sum() for start, end in zip(starts, ends)]); types = wins[starts]
     trade_times = positions[trade_time_field].to_numpy(np.int64)
     durations = trade_times[ends] - trade_times[starts]
@@ -216,8 +216,7 @@ def compute_streak_stats(positions, equity_time, balance, qs=DEFAULT_QUANTILES, 
         "max_loss_streak": int(lengths[~types].max()) if (~types).any() else 0, "win_streak_length_quantiles": q(lengths, types), "loss_streak_length_quantiles": q(lengths, ~types),
         "win_streak_profit_abs_quantiles": q(sums, types), "loss_streak_profit_abs_quantiles": q(sums, ~types, True),
         "win_streak_profit_pct_quantiles": q(profit_pct, types), "loss_streak_profit_pct_quantiles": q(profit_pct, ~types, True),
-        "win_streak_duration_quantiles": q(durations, types), "loss_streak_duration_quantiles": q(durations, ~types),
-        "start_idx": starts, "end_idx": ends, "streak_type": types.astype(np.int64)}
+        "win_streak_duration_quantiles": q(durations, types), "loss_streak_duration_quantiles": q(durations, ~types)}
 
 
 def compute_monte_carlo_stats(positions, balance, n_sims=2000, worst_pct=5, best_pct=95, seed=None, max_chunk_elems=20_000_000):
@@ -267,7 +266,7 @@ def compute_statistics(data: dict, quantile_levels=DEFAULT_QUANTILES, n_mc_sims=
     if not len(equity) or not (len(equity) == len(balance) == len(equity_time)): raise ValueError("equity, balance, and equity_time must all be non-empty and the same length")
     order = np.argsort(equity_time, kind="mergesort"); equity, balance, equity_time = equity[order], balance[order], equity_time[order]
     positions = positions.sort_values(trade_time_field, kind="mergesort").reset_index(drop=True); idx = build_index_collections(positions, trade_time_field); drawdowns = compute_drawdown_stats(equity, balance, equity_time); started = _time.perf_counter()
-    return {"meta": {"n_trades": len(positions), "n_equity_points": len(equity), "numba_available": NUMBA_AVAILABLE, "trade_time_field": trade_time_field, "compute_seconds": _time.perf_counter() - started}, "indexes": {"win_idx": idx["win_idx"], "loss_idx": idx["loss_idx"]}, "duration_stats": compute_duration_stats(positions, idx["win_idx"], idx["loss_idx"], quantile_levels), "distribution_stats": compute_distribution_stats(positions, equity_time.astype(np.int64), balance, quantile_levels, trade_time_field), "drawdown_stats": drawdowns, "trade_count_stats": compute_trade_count_stats(positions, idx), "trade_profit_stats": compute_trade_profit_stats(positions, idx, equity, balance, equity_time.astype(np.int64), drawdowns["balance_dd"]["max_dd_abs"], quantile_levels, trading_days_per_year), "position_sizing_stats": compute_position_sizing_stats(positions, idx, quantile_levels), "streak_stats": compute_streak_stats(positions, equity_time.astype(np.int64), balance, quantile_levels, trade_time_field), "monte_carlo_stats": {"bootstrap": compute_monte_carlo_stats(positions, balance, n_mc_sims, seed=mc_seed), "walk_forward": compute_walk_forward_stats(positions, wf_split)}, "seasonal_stats": compute_seasonal_stats(positions, idx), "trade_efficiency_stats": compute_trade_efficiency_stats(positions, quantile_levels)}
+    return {"meta": {"n_trades": len(positions), "n_equity_points": len(equity), "numba_available": NUMBA_AVAILABLE, "trade_time_field": trade_time_field, "compute_seconds": _time.perf_counter() - started}, "duration_stats": compute_duration_stats(positions, idx["win_idx"], idx["loss_idx"], quantile_levels), "distribution_stats": compute_distribution_stats(positions, equity_time.astype(np.int64), balance, quantile_levels, trade_time_field), "drawdown_stats": drawdowns, "trade_count_stats": compute_trade_count_stats(positions, idx), "trade_profit_stats": compute_trade_profit_stats(positions, idx, equity, balance, equity_time.astype(np.int64), drawdowns["balance_dd"]["max_dd_abs"], quantile_levels, trading_days_per_year), "position_sizing_stats": compute_position_sizing_stats(positions, idx, quantile_levels), "streak_stats": compute_streak_stats(positions, equity_time.astype(np.int64), balance, quantile_levels, trade_time_field), "monte_carlo_stats": {"bootstrap": compute_monte_carlo_stats(positions, balance, n_mc_sims, seed=mc_seed), "walk_forward": compute_walk_forward_stats(positions, wf_split)}, "seasonal_stats": compute_seasonal_stats(positions, idx), "trade_efficiency_stats": compute_trade_efficiency_stats(positions, quantile_levels)}
 
 
 class TradeStatisticsEngine:
