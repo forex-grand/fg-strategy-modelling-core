@@ -34,6 +34,20 @@ def test_market_table_builder_converts_spread_points_to_price():
     assert market.low_ask.iloc[0] == 0.902
 
 
+def test_fixed_sl_tp_scales_by_symbol_points():
+    calculator = backtesting.SLTPCalculator(
+        {"mode": "fixed", "sl_points": 100, "tp_points": 50},
+        symbol_points=0.0001,
+    )
+    signal = {"row_index": 0, "open_price": 1.0, "direction": 0}
+    market = pd.DataFrame({"high": [1.0], "low": [1.0], "close": [1.0]})
+
+    stop_loss, take_profit = calculator.compute(signal, market)
+
+    assert stop_loss == 0.99
+    assert take_profit == 1.005
+
+
 def test_run_backtest_limits_market_to_requested_indexes(monkeypatch):
     data = pd.DataFrame(
         {
@@ -125,4 +139,5 @@ def test_run_backtest_returns_current_trade_result_contract(monkeypatch):
     assert result.final_balance == 10060.0
     assert result.profit_equity.equals(result.balance_equity)
     assert result.dd_equity.equals(result.balance_equity - result.equity_curve)
-    assert result.positions["sl"].iloc[0] == -998.0
+    assert result.positions["sl"].iloc[0] == -8.0
+    assert result.positions["tp"].iloc[0] == 12.0

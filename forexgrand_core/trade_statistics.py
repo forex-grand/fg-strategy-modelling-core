@@ -159,15 +159,46 @@ def _relative_dd(equity, balance, times):
             "max_dd_abs": float(maximum.max()) if len(maximum) else float("nan"), "max_dd_pct": float(np.nanmax(pct)) if len(pct) else float("nan")}
 
 
-def _table(profit, groups):
-    return [{"period": str(key), "num_trades": len(index), "num_wins": int((profit[index] > 0).sum()),
-             "num_losses": int((profit[index] <= 0).sum()), "win_ratio": safe_divide((profit[index] > 0).sum(), len(index)),
-             "net_profit": float(profit[index].sum())} for key, index in sorted(groups.items(), key=lambda item: str(item[0]))]
+def _aggregate_period_summary(profit, groups):
+    stats = []
+    for _, index in sorted(groups.items(), key=lambda item: str(item[0])):
+        trade_count = len(index)
+        wins = int((profit[index] > 0).sum())
+        losses = int((profit[index] <= 0).sum())
+        stats.append({
+            "num_trades": trade_count,
+            "num_wins": wins,
+            "num_losses": losses,
+            "win_ratio": safe_divide(wins, trade_count),
+            "net_profit": float(profit[index].sum()),
+        })
+    if not stats:
+        empty = np.array([], dtype=np.float64)
+        return {
+            "num_trades": quantiles(empty),
+            "num_wins": quantiles(empty),
+            "num_losses": quantiles(empty),
+            "win_ratio": quantiles(empty),
+            "net_profit": quantiles(empty),
+        }
+    arrays = {
+        "num_trades": np.asarray([item["num_trades"] for item in stats], dtype=np.float64),
+        "num_wins": np.asarray([item["num_wins"] for item in stats], dtype=np.float64),
+        "num_losses": np.asarray([item["num_losses"] for item in stats], dtype=np.float64),
+        "win_ratio": np.asarray([item["win_ratio"] for item in stats], dtype=np.float64),
+        "net_profit": np.asarray([item["net_profit"] for item in stats], dtype=np.float64),
+    }
+    return {key: quantiles(values) for key, values in arrays.items()}
 
 
 def compute_trade_count_stats(positions, idx):
-    profit = positions.profit.to_numpy(float); return {"win_rate": safe_divide(len(idx["win_idx"]), len(profit)),
-        "daily": _table(profit, idx["daily_idx"]), "weekly": _table(profit, idx["weekly_idx"]), "monthly": _table(profit, idx["monthly_idx"])}
+    profit = positions.profit.to_numpy(float)
+    return {
+        "win_rate": safe_divide(len(idx["win_idx"]), len(profit)),
+        "daily": _aggregate_period_summary(profit, idx["daily_idx"]),
+        "weekly": _aggregate_period_summary(profit, idx["weekly_idx"]),
+        "monthly": _aggregate_period_summary(profit, idx["monthly_idx"]),
+    }
 
 
 def compute_trade_profit_stats(positions, idx, equity, balance, equity_time, max_balance_dd_abs, qs=DEFAULT_QUANTILES, trading_days_per_year=TRADING_DAYS_PER_YEAR):

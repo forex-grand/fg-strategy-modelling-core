@@ -283,8 +283,8 @@ class SLTPCalculator:
         open_price = float(signal["open_price"])
         direction = int(signal["direction"])
         if mode == "fixed":
-            sl_distance = float(self.config["sl_points"]) / self.symbol_points
-            tp_distance = float(self.config["tp_points"]) / self.symbol_points
+            sl_distance = float(self.config["sl_points"]) * self.symbol_points
+            tp_distance = float(self.config["tp_points"]) * self.symbol_points
         elif mode == "range":
             length = int(self.config["range"])
             if length <= 0 or row_index < length:

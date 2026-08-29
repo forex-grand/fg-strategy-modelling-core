@@ -143,8 +143,16 @@ def test_trade_time_field_selects_period_category():
 
     assert open_stats["meta"]["trade_time_field"] == "open_time"
     assert close_stats["meta"]["trade_time_field"] == "close_time"
-    assert [row["num_trades"] for row in open_stats["trade_count_stats"]["monthly"]] == [1, 1]
-    assert [row["num_trades"] for row in close_stats["trade_count_stats"]["monthly"]] == [2]
+    open_monthly = open_stats["trade_count_stats"]["monthly"]
+    close_monthly = close_stats["trade_count_stats"]["monthly"]
+
+    assert set(open_monthly) == {"num_trades", "num_wins", "num_losses", "win_ratio", "net_profit"}
+    assert open_monthly["num_trades"]["average_value"] == 1.0
+    assert open_monthly["num_trades"]["min_value"] == 1.0
+    assert open_monthly["num_trades"]["maximum_value"] == 1.0
+    assert close_monthly["num_trades"]["average_value"] == 2.0
+    assert close_monthly["num_trades"]["min_value"] == 2.0
+    assert close_monthly["num_trades"]["maximum_value"] == 2.0
 
 
 def test_net_profit_percentage_sums_trade_returns_not_absolute_profit():
