@@ -209,7 +209,7 @@ def compute_trade_profit_stats(positions, idx, equity, balance, equity_time, max
     returns = np.diff(daily_equity) / daily_equity[:-1] if len(daily_equity) > 1 else np.array([])
     trade_bases = lookup_value_at_time(positions.open_time.to_numpy(np.int64), equity_time, balance)
     risk_column = next((column for column in ("risk", "risk_amount", "risk_pct") if column in positions), None)
-    return {"net_profit_abs": float(profit.sum()), "net_profit_pct": float(float(profit.sum())/initial if initial !=0 else np.nan),
+    return {"net_profit_abs": float(profit.sum()), "net_profit_pct": float(float(profit.sum())/initial * 100.0 if initial !=0 else np.nan),
         "gross_profit": float(wins.sum()), "gross_loss": float(losses.sum()),
         "profit_factor": safe_divide(wins.sum(), abs(losses.sum()), float("inf") if wins.sum() > 0 else float("nan")),
         "recovery_factor": safe_divide(profit.sum(), max_balance_dd_abs, float("nan")),
