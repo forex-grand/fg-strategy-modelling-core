@@ -180,7 +180,7 @@ def _ratio_to_lot(ratio: float, balance: float, sl_points: float,
                   point_value: float, min_lot: float, max_lot: float) -> float:
     if sl_points <= 0.0:
         return min_lot
-    lot = ratio * (balance / point_value) / sl_points
+    lot = ratio * (balance / point_value) * sl_points
     return _round2(min_lot if lot < min_lot else max_lot if lot > max_lot else lot)
 
 
