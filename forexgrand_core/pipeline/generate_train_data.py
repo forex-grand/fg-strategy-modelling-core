@@ -293,31 +293,15 @@ class GenerateTrainData:
         
         print("Examples counts:",target_counts)
         
-        seq = self.sequence_length
-        stride = self.stride
-        chunk_size = self.chunk_size
-        import math
-
-        chunks = max(1, math.ceil(target_counts/self.chunk_size))
-        next_start_idx = seq
-        chunked_indices = []
-
-        for ch_idx in range(chunks):
-            start_idx = next_start_idx
-            end_idx   = start_idx + chunk_size*self.stride - 1
-            if target_seq_length is not None:
-                next_start_idx = end_idx + 1
-                end_idx = end_idx + target_seq_length - 1
-            else:
-                next_start_idx = end_idx + 1
-
-            chunked_indices.append(slice(start_idx - seq, end_idx))
+        chunked_indices = self._build_chunk_slices(
+            len(dataframe), target_counts, target_seq_length
+        )
         
         output_paths = self._build_shard_paths(output_path, split, 0, len(chunked_indices))
         num_shards = len(output_paths)
         num_shards = min(num_shards, num_examples)
 
-        _worker_initializer(self.sequence_length, stride, self.target_model, self.preprocess_data, self.preprocess_model_path,
+        _worker_initializer(self.sequence_length, self.stride, self.target_model, self.preprocess_data, self.preprocess_model_path,
                            self.filter_by_model, self.filter_target_label_id, self.filter_model_id)
 
         write_parallelism = self._resolve_write_parallelism(len(chunked_indices))
@@ -394,28 +378,16 @@ class GenerateTrainData:
         
         print("Examples counts:", target_counts)
         
-        seq = self.sequence_length
-        stride = self.stride
-        chunk_size = self.chunk_size
-        import math
-        
-        chunks = max(1, math.ceil(target_counts / self.chunk_size))
-        next_start_idx = seq
+        chunked_indices = self._build_chunk_slices(
+            len(dataframe), target_counts, target_seq_length
+        )
         
         all_sequence_data = {}
-        _worker_initializer(self.sequence_length, stride, self.target_model, self.preprocess_data, self.preprocess_model_path,
+        _worker_initializer(self.sequence_length, self.stride, self.target_model, self.preprocess_data, self.preprocess_model_path,
                            self.filter_by_model, self.filter_target_label_id, self.filter_model_id)
        
-        for ch_idx in range(chunks):
-            start_idx = next_start_idx
-            end_idx = start_idx + chunk_size * self.stride - 1
-            if target_seq_length is not None:
-                next_start_idx = end_idx + 1
-                end_idx = end_idx + target_seq_length - 1
-            else:
-                next_start_idx = end_idx + 1
-            
-            features_data = _build_sequence_data(dataframe.iloc[start_idx - seq:end_idx], symbol_properties)
+        for chunk_ in chunked_indices:
+            features_data = _build_sequence_data(dataframe.iloc[chunk_], symbol_properties)
             data_features = build_process_data(features_data)
            
             # Accumulate sequence data
@@ -436,10 +408,36 @@ class GenerateTrainData:
         
         return output_path
 
+    def _build_chunk_slices(
+        self,
+        dataframe_length: int,
+        example_count: int,
+        target_seq_length: Optional[int],
+    ) -> list[slice]:
+        """Build exact row slices for contiguous groups of strided windows."""
+        if example_count <= 0:
+            return []
+
+        target_length = target_seq_length or 0
+        chunked_indices = []
+        for chunk_start in range(0, example_count, self.chunk_size):
+            chunk_end = min(example_count, chunk_start + self.chunk_size)
+            first_window_start = chunk_start * self.stride
+            last_window_start = (chunk_end - 1) * self.stride
+            end = last_window_start + self.sequence_length + target_length
+            if end > dataframe_length:
+                raise ValueError("Chunk bounds exceed the available dataframe rows.")
+            chunked_indices.append(slice(first_window_start, end))
+        return chunked_indices
+
     def _count_targets(self, dataframe: pd.DataFrame):
         if self.target_model:
-            target_df_len = len(dataframe) - self.target_model.stop_minutes + 1
-            targets = max(0, (target_df_len - self.sequence_length)//self.stride + 1)
+            targets = max(
+                0,
+                (len(dataframe) - self.sequence_length - self.target_model.stop_minutes)
+                // self.stride
+                + 1,
+            )
             return targets, self.target_model.stop_minutes
         else:
             return None, None    

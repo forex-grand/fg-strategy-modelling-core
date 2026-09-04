@@ -126,18 +126,59 @@ def test_run_backtest_returns_current_trade_result_contract(monkeypatch):
         return_in_points=True,
     )
 
-    assert result.positions["profit"].tolist() == [30.0, 20.0, 10.0, 0.0]
-    assert result.positions["time_spent"].tolist() == [180, 120, 60, 0]
-    assert result.positions["close_reason"].tolist() == ["eod"] * 4
+    assert result.positions["profit"].tolist() == [30.0]
+    assert result.positions["time_spent"].tolist() == [180]
+    assert result.positions["close_reason"].tolist() == ["eod"]
     assert result.positions.index.tolist() == [
         1704067260,
-        1704067320,
-        1704067380,
-        1704067440,
     ]
-    assert result.balance_equity.tolist() == [10000.0, 10000.0, 10000.0, 10000.0, 10060.0]
-    assert result.final_balance == 10060.0
+    assert result.balance_equity.tolist() == [10000.0, 10000.0, 10000.0, 10000.0, 10030.0]
+    assert result.final_balance == 10030.0
     assert result.profit_equity.equals(result.balance_equity)
     assert result.dd_equity.equals(result.balance_equity - result.equity_curve)
     assert result.positions["sl"].iloc[0] == -8.0
     assert result.positions["tp"].iloc[0] == 12.0
+
+
+def test_run_backtest_limits_open_trades_and_statistics_to_traded_signals(monkeypatch):
+    data = pd.DataFrame(
+        {
+            "time": pd.date_range("2024-01-01", periods=5, freq="min"),
+            "open": [1, 2, 3, 4, 5],
+            "high": [1, 2, 3, 4, 5],
+            "low": [1, 2, 3, 4, 5],
+            "close": [1, 2, 3, 4, 5],
+        }
+    )
+
+    class FakeDataManager:
+        def __init__(self, **kwargs):
+            pass
+
+        def load_data(self, **kwargs):
+            return data, SimpleNamespace(point_size=0.1)
+
+    monkeypatch.setattr(backtesting, "DataManager", FakeDataManager)
+    result = backtesting.run_backtest(
+        FakeStrategy(),
+        bucket_name="bucket",
+        source="source",
+        symbol_pair="EURUSD",
+        sl_calculation={"mode": "fixed", "sl_points": 100, "tp_points": 100},
+        result_type=backtesting.RESULT_TYPE(backtesting.trade_result_and_statistics),
+    )
+
+    assert isinstance(result, dict)
+    assert result["positions_total"] == 1
+    assert len(result["positions"]) == 1
+    assert result["statistics"]["meta"]["n_trades"] == 1
+
+    result = backtesting.run_backtest(
+        FakeStrategy(),
+        bucket_name="bucket",
+        source="source",
+        symbol_pair="EURUSD",
+        sl_calculation={"mode": "fixed", "sl_points": 100, "tp_points": 100},
+        max_open_trades=2,
+    )
+    assert result["positions_total"] == 2

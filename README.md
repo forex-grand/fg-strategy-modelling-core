@@ -168,6 +168,7 @@ result = run_backtest(
     instrument_group="forex",
     sequence_length=60,
     stride=5,
+    max_open_trades=1,
     start_index=0,
     end_index=-1,
     return_in_points=True,
@@ -176,6 +177,12 @@ result = run_backtest(
 print(result.positions)
 print(result.positions_total, result.buy_count, result.sell_count)
 ```
+
+Backtests allow one open trade at a time by default. Set `max_open_trades` to a
+higher positive integer to allow concurrent trades; signals rejected because
+the limit is reached are excluded from positions and all statistics. The
+returned backtest result is dictionary-compatible and contains the realized
+positions, curves, counts, final balance, and optional statistics.
 
 `sl_calculation` supports exactly these mode-specific keys (omitted keys use the
 shown defaults):

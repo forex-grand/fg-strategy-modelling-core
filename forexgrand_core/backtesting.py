@@ -225,20 +225,39 @@ def ATR(sl_multiplier: float = 3.0, tp_multiplier: float = 3.0, atr_period: int 
 SLTP_MODES = [("FIXED_SLTP", FIXED_SLTP), ("RANGE", RANGE), ("ATR", ATR)]
 
 
-@dataclass
-class BacktestResult:
-    positions: pd.DataFrame
-    balance_equity: pd.Series
-    equity_curve: pd.Series
-    positions_total: int
-    buy_count: int
-    sell_count: int
-    unsupported_signal_count: int
-    final_balance: float
-    statistics: Optional[dict[str, Any]] = None
+class BacktestResult(dict):
+    """Dictionary-shaped backtest result with attribute compatibility."""
+
+    _FIELDS = (
+        "positions", "balance_equity", "equity_curve", "positions_total",
+        "buy_count", "sell_count", "unsupported_signal_count", "final_balance",
+        "statistics",
+    )
+
+    def __init__(self, positions: pd.DataFrame, balance_equity: pd.Series,
+                 equity_curve: pd.Series, positions_total: int, buy_count: int,
+                 sell_count: int, unsupported_signal_count: int,
+                 final_balance: float, statistics: Optional[dict[str, Any]] = None) -> None:
+        super().__init__(
+            positions=positions, balance_equity=balance_equity, equity_curve=equity_curve,
+            positions_total=positions_total, buy_count=buy_count, sell_count=sell_count,
+            unsupported_signal_count=unsupported_signal_count, final_balance=final_balance,
+            statistics=statistics,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        if name in self._FIELDS:
+            return self[name]
+        raise AttributeError(name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in self._FIELDS:
+            self[name] = value
+        else:
+            super().__setattr__(name, value)
 
     def as_dict(self) -> dict[str, Any]:
-        return self.__dict__.copy()
+        return dict(self)
 
     @property
     def profit_equity(self) -> pd.Series:
@@ -354,6 +373,11 @@ class SignalExtractor:
             chunks.append(values.astype(np.int64, copy=False))
         print("[BACKTEST] strategy batches complete", flush=True)
         directions = np.concatenate(chunks)
+        print(
+            f"[BACKTEST] generated buy signals (0): {int((directions == 0).sum())}, "
+            f"sell signals (1): {int((directions == 1).sum())}",
+            flush=True,
+        )
         unsupported = int((~np.isin(directions, (0, 1, 2))).sum())
         rows = []
         for window_number, direction in enumerate(directions):
@@ -378,6 +402,7 @@ def _run_core(
     order, open_time_sorted, direction, open_price, sl, tp,
     m_timestamps, high_bid, low_bid, high_ask, low_ask, close_col,
     n, n_bars, lotsizer_type, lotsizer_params, point_size, initial_balance,
+    max_open_trades,
 ):
     close_time = np.full(n, -1, dtype=np.int64)
     close_price = np.full(n, np.nan, dtype=np.float64)
@@ -452,11 +477,12 @@ def _run_core(
 
         while activate_ptr < n and open_time_sorted[activate_ptr] == ts:
             pid = order[activate_ptr]
-            status[pid] = 1
-            sl_points = abs(open_price[pid] - sl[pid]) / point_size
-            lots[pid] = _compute_lot(lotsizer_type, lotsizer_params, balance, sl_points, win_streak, loss_streak)
-            active[active_len] = pid
-            active_len += 1
+            if active_len < max_open_trades:
+                status[pid] = 1
+                sl_points = abs(open_price[pid] - sl[pid]) / point_size
+                lots[pid] = _compute_lot(lotsizer_type, lotsizer_params, balance, sl_points, win_streak, loss_streak)
+                active[active_len] = pid
+                active_len += 1
             activate_ptr += 1
 
         if activate_ptr >= n and active_len == 0:
@@ -499,10 +525,14 @@ class MarketTableBuilder:
 class BacktestEngine:
     def __init__(self, calculator: SLTPCalculator,
                  lot_sizing: Optional[tuple[int, np.ndarray]] = None,
-                 initial_balance: float = 10_000.0) -> None:
+                 initial_balance: float = 10_000.0,
+                 max_open_trades: int = 1) -> None:
+        if max_open_trades <= 0:
+            raise ValueError("max_open_trades must be positive")
         self.calculator = calculator
         self.lot_sizing = lot_sizing if lot_sizing is not None else FIXED_LOT(lots=1.0)
         self.initial_balance = float(initial_balance)
+        self.max_open_trades = int(max_open_trades)
 
     def run(self, signals: pd.DataFrame, market: pd.DataFrame, unsupported: int) -> BacktestResult:
         n = len(signals)
@@ -551,6 +581,7 @@ class BacktestEngine:
                 order, open_time_sorted, direction, open_price, sl, tp,
                 m_timestamps, high_bid, low_bid, high_ask, low_ask, close_col,
                 n, n_bars, lotsizer_type, lotsizer_params, point_size, self.initial_balance,
+                self.max_open_trades,
             )
             replay_progress.update(n_bars)
         finally:
@@ -558,7 +589,7 @@ class BacktestEngine:
         balance_equity = balance_equity[:bars_used]
         equity_curve = equity_curve[:bars_used]
 
-        remaining = np.nonzero(status != 2)[0]
+        remaining = np.nonzero(status == 1)[0]
         if remaining.size:
             last_ts = int(m_timestamps[-1])
             last_close, last_spread = close_col[-1], market["spread"].to_numpy(dtype=np.float64)[-1]
@@ -575,11 +606,18 @@ class BacktestEngine:
                 balance_equity[-1] = final_balance
                 equity_curve[-1] = final_balance
 
+        traded = np.nonzero(status == 2)[0]
+        open_time, direction, open_price, sl, tp = (
+            open_time[traded], direction[traded], open_price[traded], sl[traded], tp[traded]
+        )
+        close_time, close_price, profit, close_reason, lots = (
+            close_time[traded], close_price[traded], profit[traded], close_reason[traded], lots[traded]
+        )
         reason_map = {0: "tp", 1: "sl", 2: "eod", 3: "tiebreak", -1: None}
         positions = pd.DataFrame({
             "open_time": open_time,
             "direction": direction,
-            "status": pd.Categorical(["closed"] * n),
+            "status": pd.Categorical(["closed"] * len(traded)),
             "open_price": open_price,
             "sl": sl,
             "tp": tp,
@@ -666,6 +704,7 @@ def run_backtest(
     batch_size: int = 1024,
     sl_calculation: Optional[Mapping[str, Any]] = None,
     lot_sizing: Optional[tuple[int, np.ndarray]] = None,
+    max_open_trades: int = 1,
     initial_balance: float = 10_000.0,
     entry_price_type: str = "bid",
     start_index: int = 0,
@@ -704,6 +743,9 @@ def run_backtest(
             antimartingale accept ``base_lot_mode="ratio"`` (the default,
             internal mode 0) or ``base_lot_mode="lot"`` (direct calculated
             lot value, internal mode 1).
+        max_open_trades: Maximum number of simultaneously open trades.
+            Signals received while the limit is reached are ignored. Defaults
+            to ``1``.
         initial_balance: Starting account balance used by balance-dependent
             lot sizing and both equity curves.
         entry_price_type: Entry convention: ``"bid"`` (default), ``"ask"``,
@@ -743,6 +785,7 @@ def run_backtest(
         SLTPCalculator(sl_calculation, point_size),
         lot_sizing=lot_sizing,
         initial_balance=initial_balance,
+        max_open_trades=max_open_trades,
     ).run(signals, market, unsupported)
     selection = result_type or ResultType()
     if not isinstance(selection, ResultType):
