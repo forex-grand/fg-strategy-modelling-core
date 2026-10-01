@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-import forexgrand_core.backtesting as backtesting
+import fg_core.backtesting as backtesting
 
 
 class FakeStrategy(backtesting.SignalsBase):

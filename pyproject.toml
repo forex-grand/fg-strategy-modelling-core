@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fg-strategy-modelling-core"
+name = "fg_core"
 version = "0.2.5"
 description = "ForexGrand strategy modelling core library for ML model training on forex data | financial price data"
 readme = "README.md"
@@ -54,7 +54,7 @@ dependencies = [
 ]
 
 [project.scripts]
-fg_core = "forexgrand_core.cli:main"
+fg_core = "fg_core.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -84,7 +84,7 @@ Documentation = "https://github.com/forex-grand/fg-strategy-modelling-core"
 "Bug Tracker" = "https://github.com/forex-grand/fg-strategy-modelling-core/issues"
 
 [tool.setuptools]
-packages = {find = {include = ["forexgrand_core", "forexgrand_core.*"]}}
+packages = {find = {include = ["fg_core", "fg_core.*"]}}
 
 [tool.black]
 line-length = 100
@@ -129,10 +129,10 @@ warn_no_return = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
-addopts = "-v --cov=forexgrand_core --cov-report=html --cov-report=term-missing"
+addopts = "-v --cov=fg_core --cov-report=html --cov-report=term-missing"
 
 [tool.coverage.run]
-source = ["forexgrand_core"]
+source = ["fg_core"]
 omit = [
     "*/tests/*",
     "*/test_*.py",

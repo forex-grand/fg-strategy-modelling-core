@@ -2,7 +2,7 @@ import json
 
 import pandas as pd
 
-from forexgrand_core.cli import main
+from fg_core.cli import main
 
 
 def test_preprocess_data_applies_function_and_writes_gzip_pickle(tmp_path, capsys):

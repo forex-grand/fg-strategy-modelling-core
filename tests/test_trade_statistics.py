@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from forexgrand_core.trade_statistics import NUMBA_AVAILABLE, TradeStatisticsEngine
+from fg_core.trade_statistics import NUMBA_AVAILABLE, TradeStatisticsEngine
 
 
 def make_synthetic_data(

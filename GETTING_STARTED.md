@@ -62,7 +62,7 @@ cp .env.example .env
 ### Access Market Data
 
 ```python
-from forexgrand_core.data_manager import DataManager
+from fg_core.data_manager import DataManager
 
 # Initialize data manager
 manager = DataManager(base_bucket_name="forexgrand-train")
@@ -153,7 +153,7 @@ export S3_STORAGE_OPTION="minio"
 
 Check your storage credentials:
 ```python
-from forexgrand_core.settings import Settings
+from fg_core.settings import Settings
 s = Settings()
 print(f"Endpoint: {s.s3_endpoint}")
 print(f"Bucket: {s.s3_bucket_name}")
@@ -165,7 +165,7 @@ print(f"Region: {s.s3_region_name}")
 Ensure package is installed and in Python path:
 ```bash
 pip install -e .  # Install in development mode
-python -c "import src; print(forexgrand_core.__version__)"
+python -c "import src; print(fg_core.__version__)"
 ```
 
 ## 7. Next Steps
@@ -181,7 +181,7 @@ python -c "import src; print(forexgrand_core.__version__)"
 ### Load Multiple Symbols
 
 ```python
-from forexgrand_core.data_manager import DataManager
+from fg_core.data_manager import DataManager
 
 manager = DataManager()
 

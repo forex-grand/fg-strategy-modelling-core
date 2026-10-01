@@ -1,8 +1,8 @@
-# ForexGrand Strategy Modelling Core
+# fg_core
 
-ForexGrand Strategy Modelling Core is a Python package for building forex strategy modelling workflows. It includes utilities for loading market data from Cloudflare R2, preparing TFRecord datasets, training models, evaluating model quality, and packaging trained models for deployment.
+`fg_core` is the ForexGrand strategy modelling core library — a Python package for building forex strategy modelling workflows. It includes utilities for loading market data from Cloudflare R2, preparing TFRecord datasets, training models, evaluating model quality, and packaging trained models for deployment.
 
-The distribution name is `fg-strategy-modelling-core`; the Python import package is `forexgrand_core`.
+The PyPI distribution name and the Python import package are both `fg_core`.
 
 ## Features
 
@@ -19,13 +19,13 @@ The distribution name is `fg-strategy-modelling-core`; the Python import package
 Install from PyPI:
 
 ```bash
-pip install fg-strategy-modelling-core
+pip install fg_core
 ```
 
 Install from source for development:
 
 ```bash
-git clone https://github.com/forexgrand/fg-strategy-modelling-core.git
+git clone https://github.com/forex-grand/fg-strategy-modelling-core.git
 cd fg-strategy-modelling-core
 pip install -e ".[dev]"
 ```
@@ -51,7 +51,7 @@ the Python API.
 The package currently supports Cloudflare R2 storage. Configure it at the start of your script with `configure_r2`:
 
 ```python
-from forexgrand_core import configure_r2
+from fg_core import configure_r2
 
 settings = configure_r2(
     account_id="your-cloudflare-account-id",
@@ -87,8 +87,8 @@ If bucket-specific names are omitted, `bucket_name` is reused for all buckets.
 ## Load Market Data
 
 ```python
-from forexgrand_core import configure_r2
-from forexgrand_core.data_manager import DataManager
+from fg_core import configure_r2
+from fg_core.data_manager import DataManager
 
 configure_r2(
     account_id="your-cloudflare-account-id",
@@ -108,10 +108,10 @@ df, properties = manager.load_data(
 
 ```python
 import tensorflow as tf
-from forexgrand_core import configure_r2
-from forexgrand_core.pipeline.no_train_trainer import NoTrainTrainer
-from forexgrand_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
-from forexgrand_core.schemas import SymbolIn, TimeBasedTarget
+from fg_core import configure_r2
+from fg_core.pipeline.no_train_trainer import NoTrainTrainer
+from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.schemas import SymbolIn, TimeBasedTarget
 
 
 class Preprocess(PreprocessBase):
@@ -158,7 +158,7 @@ its `signals(batch)` method returns one direction per input window: `0` for buy,
 `1` for sell, or `2` for no trade.
 
 ```python
-from forexgrand_core.backtesting import run_backtest
+from fg_core.backtesting import run_backtest
 
 result = run_backtest(
     strategy=my_strategy,
@@ -204,10 +204,10 @@ output. Add `--output result.pkl.gz` to save the complete result dataclass.
 
 ## Validate Configuration
 
-Configuration is not validated on package import, so `import forexgrand_core` works before credentials are available. Validate explicitly when you want a clear setup error:
+Configuration is not validated on package import, so `import fg_core` works before credentials are available. Validate explicitly when you want a clear setup error:
 
 ```python
-from forexgrand_core.env_validator import validate_environment_on_import
+from fg_core.env_validator import validate_environment_on_import
 
 validate_environment_on_import()
 ```
@@ -261,8 +261,8 @@ python -m build
 Check imports:
 
 ```python
-import forexgrand_core
-from forexgrand_core import configure_r2, Settings
+import fg_core
+from fg_core import configure_r2, Settings
 ```
 
 ## License

@@ -1,10 +1,10 @@
 # Signal Backtester — Implementation Notes
 
-The backtester is implemented in `forexgrand_core.backtesting`. The public
+The backtester is implemented in `fg_core.backtesting`. The public
 entry point is `run_backtest`; `SLTPCalculator`, `SignalExtractor`,
 `MarketTableBuilder`, `BacktestEngine`, and `BacktestResult` are also exported
 for focused testing and custom workflows. The training-data generator is now
-available from `forexgrand_core.generate_train_data` (the old pipeline import
+available from `fg_core.generate_train_data` (the old pipeline import
 remains as a compatibility path).
 
 For the current Python API and strategy contract, see the **Backtest A Strategy**
