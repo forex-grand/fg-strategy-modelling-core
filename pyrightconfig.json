@@ -1,0 +1,17 @@
+{
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Windows",
+  "venvPath": "C:/Users/kudston/anaconda3/envs",
+  "venv": "fgrand",
+  "include": [
+    "fg_core"
+  ],
+  "extraPaths": [
+    ".",
+    "C:/Users/kudston/anaconda3/envs/fgrand/Lib/site-packages"
+  ],
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none"
+}

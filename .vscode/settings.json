@@ -1,4 +1,10 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
-}
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "python.defaultInterpreterPath": "C:\\Users\\kudston\\anaconda3\\envs\\fgrand\\python.exe",
+    "python.pythonPath": "C:\\Users\\kudston\\anaconda3\\envs\\fgrand\\python.exe",
+    "pylance.defaultInterpreterPath": "C:\\Users\\kudston\\anaconda3\\envs\\fgrand\\python.exe",
+    "python.analysis.extraPaths": [
+        "C:\\Users\\kudston\\anaconda3\\envs\\fgrand\\Lib\\site-packages"
+    ]
+}

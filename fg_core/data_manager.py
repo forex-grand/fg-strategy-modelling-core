@@ -84,7 +84,7 @@ class DataManager:
         )
         self.storage_client.bucket_name = self.base_bucket_name
 
-    def load_data(self, symbol_pair: str, instrument_group: str) -> tuple[pd.DataFrame, dict[str, Any]]:
+    def load_data(self, symbol_pair: str, instrument_group: str, source: str = None) -> tuple[pd.DataFrame, dict[str, Any]]:
         """Load M1 forex data for a symbol pair.
         
         Loads market data from local cache if available and valid, otherwise downloads from
@@ -110,6 +110,9 @@ class DataManager:
             >>> df, props = manager.load_data("EURUSD", "forex")
             >>> print(f"Loaded {len(df)} rows for {props['symbol']}")
         """
+        if source:
+            self.data_source = source
+
         pair_name = symbol_pair.strip()
         group_name = instrument_group.strip()
         if not pair_name:
