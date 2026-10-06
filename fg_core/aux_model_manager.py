@@ -79,6 +79,20 @@ def transform_fe(X, feature_transformer):
   return X_transformed
 
 
+def _extract_model_output(raw_output: Any) -> Any:
+    if isinstance(raw_output, dict) or hasattr(raw_output, "keys"):
+        for k in ("output", "signal", "direction", "Output", "Signal", "Direction"):
+            if k in raw_output:
+                return raw_output[k]
+        lower_map = {str(k).lower(): k for k in raw_output.keys()}
+        for k in ("output", "signal", "direction"):
+            if k in lower_map:
+                return raw_output[lower_map[k]]
+        if len(raw_output) > 0:
+            return list(raw_output.values())[0]
+    return raw_output
+
+
 class AuxilaryModelManager:
   def __init__(self, model_id, output_path: str = None) -> None:
       self.config = Settings()
@@ -146,17 +160,17 @@ class AuxilaryModelManager:
       model_key = self._model_key(model_id)
       meta_key = self._metadata_key(model_id)
 
-      for key in (model_key, meta_key):
-          if not self.object_exists(bucket, key):
-              raise FileNotFoundError(f"Object not found in bucket: {key}")
-
       tmp_path = self.get_model_directory(model_id=model_id)
       model_zip_path = tmp_path / "model.zip"
       meta_path = tmp_path / "properties.json"
 
       if not self._local_files_exist(model_zip_path):
+          if not self.object_exists(bucket, model_key):
+              raise FileNotFoundError(f"Object not found in bucket: {model_key}")
           self.download_file(bucket, model_key, model_zip_path)
       if not self._local_files_exist(meta_path):
+          if not self.object_exists(bucket, meta_key):
+              raise FileNotFoundError(f"Object not found in bucket: {meta_key}")
           self.download_file(bucket, meta_key, str(meta_path))
 
       properties = json.loads(meta_path.read_text())
@@ -280,6 +294,11 @@ class AuxilaryModelManager:
           else:
               tensor = tf.convert_to_tensor(value)
 
+          if key != "time" and tensor.dtype == tf.float64:
+              tensor = tf.cast(tensor, tf.float32)
+          elif key == "time" and tensor.dtype != tf.int64:
+              tensor = tf.cast(tensor, tf.int64)
+
           if tensor.shape.rank == 1:
               tensor = tf.expand_dims(tensor, axis=0)
 
@@ -301,20 +320,21 @@ class AuxilaryModelManager:
       Run saved-model inference on a feature dictionary.
       Returns a list of per-row prediction lists.
       """
-      preds = model(**data)['output']
+      out = model(**data)
+      preds = _extract_model_output(out)
       preds_np = preds.numpy() if hasattr(preds, 'numpy') else np.asarray(preds)
       if preds_np.ndim == 1:
           preds_np = preds_np.reshape(-1,)
 
       predictions = preds_np.tolist()
 
-      if model_dict.get("filter_model") is not None:
+      if model_dict and model_dict.get("filter_model") is not None:
           predictions = self._apply_filter(model_dict, data, predictions)      
 
       return predictions
   def run_xgboost_inference(self, model_dict: dict, data: dict[str, tf.Tensor]) -> list[float]:
       try:
-          preprocessed = model_dict['model'](**data)['output']
+          preprocessed = _extract_model_output(model_dict['model'](**data))
           preprocessed_np = preprocessed.numpy() if hasattr(preprocessed, 'numpy') else np.asarray(preprocessed)
           props = model_dict['metadata']
           if props['has_feature_transformer']:

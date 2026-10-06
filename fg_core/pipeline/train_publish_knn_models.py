@@ -1,7 +1,7 @@
 import os
 
 from fg_core.pipeline.knn_trainer import KNNTrainer
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 from fg_core.schemas import SymbolIn
 
 

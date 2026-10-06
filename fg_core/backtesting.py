@@ -3,11 +3,19 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Union
 
 import numpy as np
 import pandas as pd
-from numba import njit
+try:
+    from numba import njit
+except ImportError:
+    def njit(*args, **kwargs):
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        def decorator(fn):
+            return fn
+        return decorator
 from tqdm import tqdm
 
 from fg_core.data_manager import DataManager
@@ -213,8 +221,19 @@ def FIXED_SLTP(sl_points: float = 100, tp_points: float = 100) -> dict:
     return {"mode": "fixed", "sl_points": sl_points, "tp_points": tp_points}
 
 
-def RANGE(range: int = 60, sl_ratio: float = 1.0, tp_ratio: float = 1.0) -> dict:
-    return {"mode": "range", "range": range, "sl_ratio": sl_ratio, "tp_ratio": tp_ratio}
+def RANGE(
+    range: int = 60,
+    sl_ratio: float = 1.0,
+    tp_ratio: float = 1.0,
+    range_type: str = "highlow",
+) -> dict:
+    return {
+        "mode": "range",
+        "range": range,
+        "sl_ratio": sl_ratio,
+        "tp_ratio": tp_ratio,
+        "range_type": range_type,
+    }
 
 
 def ATR(sl_multiplier: float = 3.0, tp_multiplier: float = 3.0, atr_period: int = 14) -> dict:
@@ -222,7 +241,51 @@ def ATR(sl_multiplier: float = 3.0, tp_multiplier: float = 3.0, atr_period: int 
             "atr_period": atr_period}
 
 
-SLTP_MODES = [("FIXED_SLTP", FIXED_SLTP), ("RANGE", RANGE), ("ATR", ATR)]
+def MODEL(model_id: str, **kwargs: Any) -> dict:
+    return {"mode": "model", "model_id": model_id, **kwargs}
+
+
+def MODEL_SLTP(model_id: str, **kwargs: Any) -> dict:
+    return {"mode": "model", "model_id": model_id, **kwargs}
+
+
+SLTP_MODES = [
+    ("FIXED_SLTP", FIXED_SLTP),
+    ("RANGE", RANGE),
+    ("ATR", ATR),
+    ("MODEL", MODEL),
+    ("MODEL_SLTP", MODEL_SLTP),
+]
+
+
+def _infer_sequence_length(model_dict: Mapping[str, Any], default: int = 60) -> int:
+    if not isinstance(model_dict, Mapping):
+        return default
+    meta = model_dict.get("metadata", {})
+    if isinstance(meta, Mapping) and meta.get("sequence_length"):
+        return int(meta["sequence_length"])
+    components = model_dict.get("components", {})
+    if isinstance(components, Mapping):
+        for comp in components.values():
+            if isinstance(comp, Mapping):
+                comp_meta = comp.get("metadata", {})
+                if isinstance(comp_meta, Mapping) and comp_meta.get("sequence_length"):
+                    return int(comp_meta["sequence_length"])
+    return default
+
+
+def _extract_model_output(raw_output: Any) -> Any:
+    if isinstance(raw_output, Mapping) or hasattr(raw_output, "keys"):
+        for k in ("output", "signal", "direction", "Output", "Signal", "Direction"):
+            if k in raw_output:
+                return raw_output[k]
+        lower_map = {str(k).lower(): k for k in raw_output.keys()}
+        for k in ("output", "signal", "direction"):
+            if k in lower_map:
+                return raw_output[lower_map[k]]
+        if len(raw_output) > 0:
+            return list(raw_output.values())[0]
+    return raw_output
 
 
 class BacktestResult(dict):
@@ -273,17 +336,26 @@ class BacktestResult(dict):
 class SLTPCalculator:
     _KEYS = {
         "fixed": {"mode", "sl_points", "tp_points"},
-        "range": {"mode", "range", "sl_ratio", "tp_ratio"},
+        "range": {"mode", "range", "sl_ratio", "tp_ratio", "range_type", "price_type", "use_close"},
         "atr": {"mode", "sl_multiplier", "tp_multiplier", "atr_period"},
+        "model": {"mode", "model_id", "sequence_length", "aux_manager", "output_path", "batch_size"},
     }
 
-    def __init__(self, configuration: Optional[Mapping[str, Any]], symbol_points: float) -> None:
-        config = dict(configuration or {"mode": "fixed", "sl_points": 100, "tp_points": 100})
+    def __init__(self, configuration: Optional[Union[Mapping[str, Any], str]], symbol_points: float) -> None:
+        if isinstance(configuration, str):
+            config = {"mode": "model", "model_id": configuration}
+        else:
+            config = dict(configuration or {"mode": "fixed", "sl_points": 100, "tp_points": 100})
+
+        if "model_id" in config and "mode" not in config:
+            config["mode"] = "model"
+
         mode = config.get("mode", "fixed")
         defaults = {
             "fixed": {"sl_points": 100, "tp_points": 100},
-            "range": {"range": 60, "sl_ratio": 1.0, "tp_ratio": 1.0},
+            "range": {"range": 60, "sl_ratio": 1.0, "tp_ratio": 1.0, "range_type": "highlow"},
             "atr": {"sl_multiplier": 3.0, "tp_multiplier": 3.0, "atr_period": 14},
+            "model": {"model_id": "", "batch_size": 1024},
         }
         if mode not in self._KEYS:
             raise ValueError(f"Unsupported SL/TP mode: {mode!r}.")
@@ -295,6 +367,122 @@ class SLTPCalculator:
             raise ValueError("symbol_points must be greater than zero.")
         self.config = config
         self.symbol_points = float(symbol_points)
+        self.aux_manager = None
+        self.sequence_length = 0
+        self._cache: dict[int, tuple[float, float]] = {}
+
+        if mode == "model":
+            model_id = self.config.get("model_id")
+            aux_manager = self.config.get("aux_manager")
+            if not model_id and aux_manager is None:
+                raise ValueError("model_id is required for 'model' SL/TP mode.")
+            if aux_manager is None:
+                from fg_core.aux_model_manager import AuxilaryModelManager
+                aux_manager = AuxilaryModelManager(
+                    model_id=model_id,
+                    output_path=self.config.get("output_path"),
+                )
+            self.aux_manager = aux_manager
+            self.sequence_length = _infer_sequence_length(
+                aux_manager.model,
+                default=int(self.config.get("sequence_length") or 60),
+            )
+
+    def _predict_sltp_distances(self, batch: Mapping[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+        manager = self.aux_manager
+        seq_len = self.sequence_length
+        prepared = manager.prepare_data(batch, seq_len)
+        model_dict = manager.model
+
+        if model_dict.get("kind") == "ensemble":
+            preds = np.asarray(manager._predict_ensemble(model_dict, batch))
+            raw_sl = preds
+            raw_tp = preds
+        elif "xgb" in model_dict.get("metadata", {}).get("model_type", "").lower():
+            preds = np.asarray(manager.run_xgboost_inference(model_dict, prepared))
+            raw_sl = preds
+            raw_tp = preds
+        else:
+            model_fn = model_dict["model"]
+            raw_out = model_fn(**prepared)
+            if isinstance(raw_out, Mapping) or hasattr(raw_out, "keys"):
+                lower_keys = {str(k).lower(): k for k in raw_out.keys()}
+                sl_key = None
+                tp_key = None
+                for k in ("sl", "sl_distance", "stop_loss", "sl_dist"):
+                    if k in lower_keys:
+                        sl_key = lower_keys[k]
+                        break
+                for k in ("tp", "tp_distance", "take_profit", "tp_dist"):
+                    if k in lower_keys:
+                        tp_key = lower_keys[k]
+                        break
+                if sl_key is not None and tp_key is not None:
+                    sl_t = raw_out[sl_key]
+                    tp_t = raw_out[tp_key]
+                    raw_sl = np.asarray(sl_t.numpy() if hasattr(sl_t, "numpy") else sl_t)
+                    raw_tp = np.asarray(tp_t.numpy() if hasattr(tp_t, "numpy") else tp_t)
+                else:
+                    out_t = _extract_model_output(raw_out)
+                    arr = np.asarray(out_t.numpy() if hasattr(out_t, "numpy") else out_t)
+                    if arr.ndim >= 2:
+                        if arr.shape[-1] >= 2:
+                            raw_sl = arr[..., 0]
+                            raw_tp = arr[..., 1]
+                        else:
+                            raw_sl = arr[..., 0]
+                            raw_tp = arr[..., 0]
+                    elif arr.ndim == 1:
+                        time_col = batch.get("time")
+                        n_windows = len(time_col) if time_col is not None else 1
+                        if len(arr) == 2 and n_windows == 1:
+                            raw_sl = np.array([arr[0]])
+                            raw_tp = np.array([arr[1]])
+                        else:
+                            raw_sl = arr
+                            raw_tp = arr
+                    else:
+                        raw_sl = arr
+                        raw_tp = arr
+            else:
+                arr = np.asarray(raw_out.numpy() if hasattr(raw_out, "numpy") else raw_out)
+                if arr.ndim >= 2 and arr.shape[-1] >= 2:
+                    raw_sl = arr[..., 0]
+                    raw_tp = arr[..., 1]
+                else:
+                    raw_sl = arr
+                    raw_tp = arr
+
+        raw_sl = np.atleast_1d(np.abs(np.asarray(raw_sl, dtype=np.float64)))
+        raw_tp = np.atleast_1d(np.abs(np.asarray(raw_tp, dtype=np.float64)))
+        return raw_sl, raw_tp
+
+    def precompute(self, signals: pd.DataFrame, market: pd.DataFrame) -> None:
+        if self.config.get("mode") != "model" or self.aux_manager is None:
+            return
+        if signals.empty:
+            return
+        length = self.sequence_length
+        row_indices = signals["row_index"].to_numpy()
+        valid_indices = row_indices[row_indices >= length - 1]
+        missing_indices = [int(idx) for idx in valid_indices if int(idx) not in self._cache]
+        if not missing_indices:
+            return
+        batch_size = int(self.config.get("batch_size", 1024))
+        columns = ("_timestamp", "open", "high", "low", "close", "spread", "real_volume", "tick_volume")
+        for start in range(0, len(missing_indices), batch_size):
+            end = min(len(missing_indices), start + batch_size)
+            batch_row_indices = missing_indices[start:end]
+            batch_starts = [idx - length + 1 for idx in batch_row_indices]
+            batch = {
+                "time" if column == "_timestamp" else column: np.stack(
+                    [market[column].to_numpy()[ws:ws + length] for ws in batch_starts]
+                )
+                for column in columns
+            }
+            sl_d, tp_d = self._predict_sltp_distances(batch)
+            for idx, s, t in zip(batch_row_indices, sl_d, tp_d):
+                self._cache[idx] = (float(s), float(t))
 
     def compute(self, signal: Mapping[str, Any], market: pd.DataFrame) -> tuple[float, float]:
         mode = self.config["mode"]
@@ -309,9 +497,33 @@ class SLTPCalculator:
             if length <= 0 or row_index < length:
                 raise ValueError("range must be positive and have enough preceding bars.")
             context = market.iloc[row_index - length:row_index]
-            bar_range = context["high"].max() - context["low"].min()
+            range_type = str(self.config.get("range_type", self.config.get("price_type", "highlow"))).lower()
+            if self.config.get("use_close") is True or range_type in {"close", "use_close"}:
+                bar_range = context["close"].max() - context["close"].min()
+            elif range_type in {"highlow", "high_low", "hl"}:
+                bar_range = context["high"].max() - context["low"].min()
+            else:
+                raise ValueError(f"Unsupported range_type: {range_type!r}. Expected 'highlow' or 'close'.")
             sl_distance = bar_range * float(self.config["sl_ratio"])
             tp_distance = bar_range * float(self.config["tp_ratio"])
+        elif mode == "model":
+            length = self.sequence_length
+            if length <= 0 or row_index < length - 1:
+                raise ValueError("model sequence_length must be positive and have enough preceding bars.")
+            if row_index in self._cache:
+                sl_distance, tp_distance = self._cache[row_index]
+            else:
+                window_start = row_index - length + 1
+                window_end = row_index + 1
+                columns = ("_timestamp", "open", "high", "low", "close", "spread", "real_volume", "tick_volume")
+                batch = {
+                    "time" if column == "_timestamp" else column: market[column].to_numpy()[window_start:window_end][np.newaxis, :]
+                    for column in columns
+                }
+                sl_d, tp_d = self._predict_sltp_distances(batch)
+                sl_distance = float(sl_d[0])
+                tp_distance = float(tp_d[0])
+                self._cache[row_index] = (sl_distance, tp_distance)
         else:
             period = int(self.config["atr_period"])
             if period <= 0 or row_index < period:
@@ -326,6 +538,57 @@ class SLTPCalculator:
         if direction == 0:
             return open_price - sl_distance, open_price + tp_distance
         return open_price + sl_distance, open_price - tp_distance
+
+
+class ModelSignalsStrategy(SignalsBase):
+    """Strategy that generates signals using a model loaded via AuxilaryModelManager."""
+
+    def __init__(
+        self,
+        model_id: str,
+        sequence_length: Optional[int] = None,
+        aux_manager: Optional[Any] = None,
+        output_path: Optional[str] = None,
+    ) -> None:
+        if aux_manager is None:
+            from fg_core.aux_model_manager import AuxilaryModelManager
+            aux_manager = AuxilaryModelManager(model_id=model_id, output_path=output_path)
+        self.aux_manager = aux_manager
+        self.model_id = model_id
+        inferred = _infer_sequence_length(aux_manager.model, default=sequence_length or 60)
+        super().__init__(sequence_length=inferred)
+
+    def signals(self, batch: Mapping[str, np.ndarray]) -> Any:
+        manager = self.aux_manager
+        model_dict = manager.model
+        if model_dict.get("kind") == "ensemble":
+            predictions = manager._predict_ensemble(model_dict, batch)
+            directions = np.asarray(predictions, dtype=np.int64)
+        else:
+            prepared = manager.prepare_data(batch, self.sequence_length)
+            if "xgb" in model_dict.get("metadata", {}).get("model_type", "").lower():
+                predictions = manager.run_xgboost_inference(model_dict, prepared)
+                directions = np.asarray(predictions, dtype=np.int64)
+            else:
+                model_fn = model_dict["model"]
+                raw_output = model_fn(**prepared)
+                out_tensor = _extract_model_output(raw_output)
+                arr = out_tensor.numpy() if hasattr(out_tensor, "numpy") else np.asarray(out_tensor)
+                if arr.ndim >= 2:
+                    if arr.shape[-1] > 1:
+                        directions = np.argmax(arr, axis=-1)
+                    else:
+                        directions = np.squeeze(arr, axis=-1)
+                else:
+                    directions = arr
+                if np.issubdtype(directions.dtype, np.floating):
+                    directions = np.round(directions).astype(np.int64)
+                else:
+                    directions = directions.astype(np.int64)
+                if model_dict.get("filter_model") is not None:
+                    filtered = manager._apply_filter(model_dict, batch, directions.tolist())
+                    directions = np.asarray(filtered, dtype=np.int64)
+        return {"direction": directions}
 
 
 class SignalExtractor:
@@ -535,6 +798,8 @@ class BacktestEngine:
         self.max_open_trades = int(max_open_trades)
 
     def run(self, signals: pd.DataFrame, market: pd.DataFrame, unsupported: int) -> BacktestResult:
+        if hasattr(self.calculator, "precompute"):
+            self.calculator.precompute(signals, market)
         n = len(signals)
         open_price = np.empty(n, dtype=np.float64)
         direction = np.empty(n, dtype=np.int8)
@@ -693,8 +958,9 @@ def _statistics_input(result: BacktestResult, percentage: bool = False) -> dict[
 
 
 def run_backtest(
-    strategy: SignalsBase,
+    strategy: Optional[Union[SignalsBase, str]] = None,
     *,
+    model_id: Optional[str] = None,
     bucket_name: str,
     source: str,
     symbol_pair: str,
@@ -702,7 +968,8 @@ def run_backtest(
     sequence_length: int = 60,
     stride: int = 1,
     batch_size: int = 1024,
-    sl_calculation: Optional[Mapping[str, Any]] = None,
+    sl_calculation: Optional[Union[Mapping[str, Any], str]] = None,
+    sltp_model_id: Optional[str] = None,
     lot_sizing: Optional[tuple[int, np.ndarray]] = None,
     max_open_trades: int = 1,
     initial_balance: float = 10_000.0,
@@ -712,31 +979,34 @@ def run_backtest(
     result_type: Optional[ResultType] = None,
     return_in_points: bool = False,
 ) -> Any:
-    """Run a strategy against DataManager-compatible OHLC data.
+    """Run a strategy or auxiliary model against DataManager-compatible OHLC data.
 
     Args:
         strategy: An already-constructed instance of a concrete ``SignalsBase``
-            subclass implementing ``signals(batch)``. Its ``sequence_length``
-            controls the input window length.
+            subclass implementing ``signals(batch)``, or a string model ID.
+        model_id: Model ID loaded using ``AuxilaryModelManager`` to generate
+            signals if ``strategy`` is not provided.
         bucket_name: Storage bucket used by ``DataManager``.
         source: Market-data source name passed to ``DataManager``.
         symbol_pair: Symbol to backtest, for example ``"EURUSD"``.
         instrument_group: Optional data group, for example ``"forex_majors"``.
         sequence_length: Number of bars supplied to the strategy per window.
+            Inferred from model metadata when ``model_id`` is supplied.
         stride: Number of bars between consecutive strategy windows.
         batch_size: Number of windows sent to the strategy at a time.
-        sl_calculation: SL/TP mode configuration. ``None`` uses fixed mode with
-            ``sl_points=100`` and ``tp_points=100``. For ``mode="fixed"``,
+        sl_calculation: SL/TP mode configuration or model ID. ``None`` uses fixed
+            mode with ``sl_points=100`` and ``tp_points=100``. For ``mode="fixed"``,
             accepted keys are ``mode``, ``sl_points`` and ``tp_points``; both
             point values default to ``100``. For ``mode="range"``, accepted
-            keys are ``mode``, ``range``, ``sl_ratio`` and ``tp_ratio``; the
-            defaults are ``range=60``, ``sl_ratio=1.0`` and ``tp_ratio=1.0``.
-            For ``mode="atr"``, accepted keys are ``mode``,
-            ``sl_multiplier``, ``tp_multiplier`` and ``atr_period``; the
-            defaults are ``sl_multiplier=3.0``, ``tp_multiplier=3.0`` and
-            ``atr_period=14``. Unknown keys or unsupported modes raise
-            ``ValueError``. Point distances are converted using the symbol's
-            ``point_size`` from its instrument properties.
+            keys are ``mode``, ``range``, ``sl_ratio``, ``tp_ratio``, and
+            ``range_type`` ("highlow" [default] or "close"); the defaults are
+            ``range=60``, ``sl_ratio=1.0``, ``tp_ratio=1.0``, and
+            ``range_type="highlow"``. For ``mode="atr"``, accepted keys are
+            ``mode``, ``sl_multiplier``, ``tp_multiplier`` and ``atr_period``;
+            the defaults are ``sl_multiplier=3.0``, ``tp_multiplier=3.0`` and
+            ``atr_period=14``. For ``mode="model"``, accepts ``model_id`` to
+            predict raw SL and TP price distances directly from market bars.
+        sltp_model_id: Optional model ID for model-based SL/TP calculation.
         lot_sizing: Lot sizer configuration built with ``FIXED_LOT``,
             ``PERCENTAGE``, ``MARTINGALE``, or ``ANTIMARTINGALE``. ``None``
             defaults to ``FIXED_LOT(lots=1.0)``. Martingale and
@@ -775,7 +1045,23 @@ def run_backtest(
         raise ValueError("end_index must be -1 or greater.")
     market = market.iloc[start_index:] if end_index == -1 else market.iloc[start_index:end_index]
     print(f"[BACKTEST] selected market rows {start_index}:{end_index}", flush=True)
-    strategy = _validate_strategy(strategy)
+
+    if sltp_model_id is not None:
+        sl_calculation = {"mode": "model", "model_id": sltp_model_id}
+    elif isinstance(sl_calculation, str):
+        sl_calculation = {"mode": "model", "model_id": sl_calculation}
+
+    if isinstance(strategy, str):
+        model_id = strategy
+        strategy = None
+
+    if strategy is None:
+        if model_id is None:
+            raise ValueError("Either strategy or model_id must be provided.")
+        strategy = ModelSignalsStrategy(model_id=model_id, sequence_length=sequence_length)
+    else:
+        strategy = _validate_strategy(strategy)
+
     sequence_length = strategy.sequence_length
     print("[BACKTEST] extracting signals", flush=True)
     signals, unsupported = SignalExtractor(strategy, sequence_length, batch_size, entry_price_type, stride).extract(market)

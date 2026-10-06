@@ -1,7 +1,7 @@
 from fg_core.schemas import TARGET_MODEL_TYPES
 from fg_core.pipeline.trainer import Trainer as TR
 from fg_core.schemas import SymbolIn
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 
 def train_publish_nn_models(preprocess_class:PreprocessBase, 
   target_model:TARGET_MODEL_TYPES, sequence_length:int, run_performance_test: bool=True,

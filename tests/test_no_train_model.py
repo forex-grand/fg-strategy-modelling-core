@@ -13,7 +13,7 @@ import numpy as np
 import tensorflow as tf
 
 from fg_core.models_architecture.no_train_model import NoTrainModel
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 
 
 class DummyPreprocessor(PreprocessBase):

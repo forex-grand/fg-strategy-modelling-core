@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tensorflow as tf
 
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 
 
 class ExamplePreprocessor(PreprocessBase):

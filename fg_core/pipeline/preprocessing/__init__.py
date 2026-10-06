@@ -8,7 +8,7 @@ Modules:
     - example_preprocessor: Example implementation with standard features
 """
 
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 from fg_core.pipeline.preprocessing.example_preprocessor import ExamplePreprocessor
 
 __all__ = [

@@ -1,4 +1,5 @@
 import os
+import json
 
 os.environ.setdefault("DATA_SOURCE", "mt5")
 os.environ.setdefault("S3_STORAGE_OPTION", "minio")
@@ -39,3 +40,36 @@ def test_ohlc_to_feature_dict_uses_direct_feature_dictionary():
     assert feature_dict["time"].shape == (1, 3)
     assert feature_dict["close"].shape == (1, 3)
     assert np.array_equal(feature_dict["close"].numpy(), np.array([[4.0, 5.0, 6.0]], dtype=np.float32))
+
+
+def test_fetch_model_uses_complete_local_cache_without_r2_requests(tmp_path, monkeypatch):
+    model_id = "cached-model"
+    model_dir = tmp_path / model_id
+    model_dir.mkdir()
+    model_zip_path = model_dir / "model.zip"
+    model_zip_path.write_bytes(b"cached model")
+    meta_path = model_dir / "properties.json"
+    meta_path.write_text(json.dumps({"model_kind": "single"}), encoding="utf-8")
+
+    manager = AuxilaryModelManager.__new__(AuxilaryModelManager)
+    manager.storage_bucket = "models"
+    manager.data_directory = tmp_path
+
+    def fail_on_r2_check(*_args, **_kwargs):
+        raise AssertionError("A complete local cache must be used before checking R2.")
+
+    monkeypatch.setattr(
+        manager,
+        "object_exists",
+        fail_on_r2_check,
+    )
+    monkeypatch.setattr(
+        manager,
+        "_load_single",
+        lambda *_args: {"kind": "single", "metadata": {"model_kind": "single"}},
+    )
+
+    result = manager.fetch_model_from_storage(model_id)
+
+    assert result["kind"] == "single"
+    assert result["metadata"]["model_kind"] == "single"

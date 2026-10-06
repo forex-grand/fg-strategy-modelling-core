@@ -110,7 +110,7 @@ df, properties = manager.load_data(
 import tensorflow as tf
 from fg_core import configure_r2
 from fg_core.pipeline.no_train_trainer import NoTrainTrainer
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 from fg_core.schemas import SymbolIn, TimeBasedTarget
 
 

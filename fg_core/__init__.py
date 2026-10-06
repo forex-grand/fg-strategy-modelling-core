@@ -60,14 +60,14 @@ def __getattr__(name):
     elif name == "GenerateTrainData":
         from fg_core.generate_train_data import GenerateTrainData
         return GenerateTrainData
-    elif name in {"SignalsBase", "BacktestResult", "ResultType", "RESULT_TYPE", "trade_result_only", "statistics_only", "trade_result_and_statistics", "trade_result", "statistics", "SLTPCalculator", "SignalExtractor", "MarketTableBuilder", "BacktestEngine", "StrategyLoadError", "run_backtest", "FIXED_LOT", "PERCENTAGE", "MARTINGALE", "ANTIMARTINGALE", "FIXED_SLTP", "RANGE", "ATR", "LOTSIZERS", "SLTP_MODES"}:
+    elif name in {"SignalsBase", "BacktestResult", "ResultType", "RESULT_TYPE", "trade_result_only", "statistics_only", "trade_result_and_statistics", "trade_result", "statistics", "SLTPCalculator", "SignalExtractor", "MarketTableBuilder", "BacktestEngine", "StrategyLoadError", "run_backtest", "FIXED_LOT", "PERCENTAGE", "MARTINGALE", "ANTIMARTINGALE", "FIXED_SLTP", "RANGE", "ATR", "MODEL", "MODEL_SLTP", "ModelSignalsStrategy", "LOTSIZERS", "SLTP_MODES"}:
         from fg_core.backtesting import (
             ANTIMARTINGALE, ATR, FIXED_LOT, FIXED_SLTP, LOTSIZERS, MARTINGALE,
-            PERCENTAGE, RANGE, SLTP_MODES, BacktestEngine, BacktestResult,
-            MarketTableBuilder, RESULT_TYPE, ResultType, SignalsBase, SLTPCalculator,
-            SignalExtractor, StrategyLoadError, run_backtest, statistics,
-            statistics_only, trade_result, trade_result_and_statistics,
-            trade_result_only,
+            MODEL, MODEL_SLTP, ModelSignalsStrategy, PERCENTAGE, RANGE, SLTP_MODES,
+            BacktestEngine, BacktestResult, MarketTableBuilder, RESULT_TYPE, ResultType,
+            SignalsBase, SLTPCalculator, SignalExtractor, StrategyLoadError,
+            run_backtest, statistics, statistics_only, trade_result,
+            trade_result_and_statistics, trade_result_only,
         )
         return locals()[name]
     elif name == "Evaluator":
@@ -106,6 +106,9 @@ __all__ = [
     "FIXED_SLTP",
     "RANGE",
     "ATR",
+    "MODEL",
+    "MODEL_SLTP",
+    "ModelSignalsStrategy",
     "LOTSIZERS",
     "SLTP_MODES",
 ]

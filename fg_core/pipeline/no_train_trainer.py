@@ -12,7 +12,7 @@ from fg_core.models_architecture.no_train_model import NoTrainModel
 from fg_core.pipeline.evaluator import Evaluator
 from fg_core.generate_train_data import GenerateTrainData
 from fg_core.pipeline.performance_test import test_model_live_performance
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 from fg_core.pipeline.pusher import ModelPusher
 from fg_core.pipeline.statistics_gen import get_target_statistics
 from fg_core.schemas import ModelBuildTrainArguments, SymbolIn, TARGET_MODEL_TYPES, TrainingResult

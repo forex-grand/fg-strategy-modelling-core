@@ -6,7 +6,7 @@ from typing import Any, List, Optional, Union
 import keras
 import tensorflow as tf
 
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 from fg_core.settings import Settings
 from fg_core.schemas import ModelBuildTrainArguments
 

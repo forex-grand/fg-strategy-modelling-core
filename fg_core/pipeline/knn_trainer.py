@@ -14,7 +14,7 @@ from keras import Layer
 
 from fg_core.models_architecture.knn_model import KNNModel
 from fg_core.generate_train_data import GenerateTrainData
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 from fg_core.pipeline.pusher import ModelPusher
 from fg_core.schemas import ModelBuildTrainArguments, SymbolIn, TrainingResult
 from fg_core.settings import Settings

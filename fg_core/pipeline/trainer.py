@@ -17,7 +17,7 @@ from fg_core.models_architecture.train_models.lstm_model import LSTMModel
 from fg_core.settings import Settings
 from fg_core.pipeline.evaluator import Evaluator
 from fg_core.generate_train_data import GenerateTrainData
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 from fg_core.pipeline.statistics_gen import get_target_statistics
 from fg_core.pipeline.pusher import ModelPusher
 from fg_core.models_architecture.base_model import BaseModel

@@ -140,4 +140,4 @@ class ModelPusher:
             )
 
         LOGGER.info("Model pushed to %s", model_object_key)
-        return unique_identifier
+        return str(unique_identifier)

@@ -1,6 +1,6 @@
 import os
 
-from fg_core.pipeline.preprocessing.base_preprocessor import PreprocessBase
+from fg_core.pipeline.base_preprocessor import PreprocessBase
 from fg_core.pipeline.xgb_trainer import XGBTrainer
 from fg_core.schemas import TARGET_MODEL_TYPES, SymbolIn
 
