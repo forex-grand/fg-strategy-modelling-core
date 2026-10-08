@@ -60,6 +60,9 @@ def __getattr__(name):
     elif name == "GenerateTrainData":
         from fg_core.generate_train_data import GenerateTrainData
         return GenerateTrainData
+    elif name == "generate_multiple_train_data":
+        from fg_core.generate_train_data import generate_multiple_train_data
+        return generate_multiple_train_data
     elif name in {"SignalsBase", "BacktestResult", "ResultType", "RESULT_TYPE", "trade_result_only", "statistics_only", "trade_result_and_statistics", "trade_result", "statistics", "SLTPCalculator", "SignalExtractor", "MarketTableBuilder", "BacktestEngine", "StrategyLoadError", "run_backtest", "FIXED_LOT", "PERCENTAGE", "MARTINGALE", "ANTIMARTINGALE", "FIXED_SLTP", "RANGE", "ATR", "MODEL", "MODEL_SLTP", "ModelSignalsStrategy", "LOTSIZERS", "SLTP_MODES"}:
         from fg_core.backtesting import (
             ANTIMARTINGALE, ATR, FIXED_LOT, FIXED_SLTP, LOTSIZERS, MARTINGALE,
@@ -83,6 +86,7 @@ __all__ = [
     "configure_r2",
     "Trainer",
     "GenerateTrainData",
+    "generate_multiple_train_data",
     "Evaluator",
     "BacktestResult",
     "SignalsBase",

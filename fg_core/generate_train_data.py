@@ -4,6 +4,6 @@ The implementation remains import-compatible with older ``pipeline`` users
 while this module becomes the package-level API.
 """
 
-from fg_core.pipeline.generate_train_data import GenerateTrainData
+from fg_core.pipeline.generate_train_data import GenerateTrainData, generate_multiple_train_data
 
-__all__ = ["GenerateTrainData"]
+__all__ = ["GenerateTrainData", "generate_multiple_train_data"]

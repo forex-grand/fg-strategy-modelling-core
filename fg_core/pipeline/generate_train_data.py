@@ -4,7 +4,7 @@ import json
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import multiprocessing as mp
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence, Any
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -252,6 +252,151 @@ class GenerateTrainData:
         targets_dict = self._build_target_data(_raw_frame, self.train_properties)
         
         return targets_dict[0]
+
+    def generate_multiple_train_data(
+        self,
+        symbols: Sequence[tuple[str, str]] | str,
+        bucket: str | Sequence[tuple[str, str]] = "forexgrand-train",
+        source: Optional[str] = None,
+        sequence_length: Optional[int] = None,
+        stride: Optional[int] = None,
+        timeframe: str = "1m",
+        return_dataframe: bool = False,
+    ) -> dict[str, np.ndarray] | tuple[dict[str, np.ndarray], pd.DataFrame]:
+        """Generate chronologically aligned multi-symbol training sequence data.
+
+        Downloads/loads market dataframes for several (symbol_group, symbol_pair) tuples from
+        the specified custom bucket and source, aligns all symbols to a single unified datetime
+        range extending from the earliest to latest available timestamp across all pairs, handles
+        missing timesteps via forward-fill and backfill, combines symbols in alphabetical order
+        of symbol name, and constructs sequence windows shaped as:
+            (total_sequences, num_symbol_pairs, sequence_length)
+
+        Args:
+            symbols: List of (symbol_group, symbol_pair) tuples, e.g. [("forex", "EURUSD"), ("forex", "GBPUSD")].
+            bucket: Custom bucket name (e.g. 'forexgrand-train', not eval) where all symbol data resides.
+            source: Common data source name (e.g. 'ctrader') used for all symbols in DataManager.
+            sequence_length: Number of time steps per sequence window. Defaults to self.sequence_length.
+            stride: Step size between sequence windows. Defaults to self.stride or 1.
+            timeframe: Timeframe resolution (default '1m').
+            custom_data: Optional mapping of (group, pair) or pair -> pd.DataFrame to use instead of remote download.
+            return_dataframe: If True, returns (sequence_dict, combined_dataframe).
+
+        Returns:
+            Dictionary mapping feature column names ('time', 'open', 'close', 'high', 'low',
+            'real_volume', 'spread', 'tick_volume') to numpy ndarrays of shape:
+                (total_sequences, num_symbol_pairs, sequence_length)
+        """
+        if isinstance(symbols, str) and not isinstance(bucket, str):
+            bucket, symbols = symbols, bucket
+
+        if isinstance(source, int):
+            sequence_length, stride, source = source, sequence_length, None
+
+        if not symbols:
+            raise ValueError("At least one (symbol_group, symbol_pair) tuple must be provided.")
+
+        seq_len = sequence_length if sequence_length is not None else self.sequence_length
+        if seq_len is None or seq_len <= 0:
+            raise ValueError("sequence_length must be a positive integer.")
+        self.sequence_length = seq_len
+
+        stride_val = stride if stride is not None else (self.stride if self.stride is not None else 1)
+        if stride_val <= 0:
+            raise ValueError("stride must be a positive integer.")
+        self.stride = stride_val
+
+        bucket_name = str(bucket).strip() if bucket else "forexgrand-train"
+
+        settings = getattr(self, "settings", None)
+        settings_source = getattr(settings, "data_source", None) if settings is not None else None
+        source_name = (source or settings_source or "").strip()
+        if not source_name:
+            raise ValueError("A source argument is required for downloading data with DataManager (e.g. 'dukascopy').")
+
+        parsed_symbols: dict[str, tuple[str, str]] = {}
+        for item in symbols:
+            if not isinstance(item, (tuple, list)) or len(item) < 2:
+                raise ValueError(f"Each symbol item must be a (symbol_group, symbol_pair) tuple, got {item}")
+            group_val, pair_val = str(item[0]).strip(), str(item[1]).strip()
+
+            if pair_val not in parsed_symbols:
+                parsed_symbols[pair_val] = (group_val, pair_val)
+
+        sorted_pairs = sorted(parsed_symbols.keys())
+        sorted_symbols = [parsed_symbols[p] for p in sorted_pairs]
+
+        dm = self._build_data_manager(bucket_name, source=source_name or None)
+        prepared_dfs: dict[str, pd.DataFrame] = {}
+
+        for group, pair in sorted_symbols:
+            pair_key = pair
+            raw_frame, _ = dm.load_data(pair, group, source=source_name or None)
+
+            norm_df = self._prepare_dataframe(raw_frame)
+            if norm_df["time"].dt.tz is not None:
+                norm_df["time"] = norm_df["time"].dt.tz_convert("UTC").dt.tz_localize(None)
+            prepared_dfs[pair_key] = norm_df
+
+        earliest_date = min(df["time"].min() for df in prepared_dfs.values())
+        latest_date = max(df["time"].max() for df in prepared_dfs.values())
+
+        freq = TIMEFRAME_ALIASES.get(timeframe.strip(), timeframe)
+        datetime_index = pd.date_range(start=earliest_date, end=latest_date, freq=freq, name="time")
+        total_rows = len(datetime_index)
+
+        if total_rows < seq_len:
+            raise ValueError(
+                f"At least {seq_len} rows are required to create sequences, but combined data only has {total_rows} rows."
+            )
+
+        aligned_dfs: dict[str, pd.DataFrame] = {}
+        for pair_key in sorted_pairs:
+            df = prepared_dfs[pair_key]
+            reindexed = df.set_index("time").reindex(datetime_index)
+            # Replace missing timesteps with previous value before those minutes
+            filled = reindexed.ffill()
+            # For earlier timestamps that don't have prior data, use first values to backfill
+            filled = filled.bfill()
+            if filled.isna().any().any():
+                filled = filled.fillna(0.0)
+            aligned_dfs[pair_key] = filled
+
+        combined_df = pd.concat(aligned_dfs, axis=1, names=["symbol", "feature"])
+        self.combined_dataframe = combined_df
+        self.symbol_pairs = sorted_pairs
+
+        num_symbol_pairs = len(sorted_pairs)
+        total_sequences = max(0, ((total_rows - seq_len) // stride_val) + 1)
+
+        result_dict: dict[str, np.ndarray] = {}
+
+        for col in BASE_FEATURE_COLUMNS:
+            feature_matrix = np.stack(
+                [aligned_dfs[p][col].to_numpy(dtype=np.float32, copy=False) for p in sorted_pairs],
+                axis=1,
+            )
+            windows = np.lib.stride_tricks.sliding_window_view(
+                feature_matrix, window_shape=seq_len, axis=0
+            )
+            if stride_val > 1:
+                windows = windows[::stride_val]
+            result_dict[col] = np.ascontiguousarray(windows, dtype=np.float32)
+
+        time_values = (
+            pd.Series(datetime_index).astype("datetime64[s]").astype("int64").to_numpy(copy=False)
+        ).astype(np.int64, copy=False)
+        time_windows = np.lib.stride_tricks.sliding_window_view(
+            time_values, window_shape=seq_len
+        )
+        if stride_val > 1:
+            time_windows = time_windows[::stride_val]
+        time_3d = np.tile(time_windows[:, np.newaxis, :], (1, num_symbol_pairs, 1))
+        result_dict["time"] = np.ascontiguousarray(time_3d, dtype=np.int64)
+
+        if return_dataframe:
+            return result_dict, combined_df
+        return result_dict
 
     def generate_train_data_examples(self, dataframe: pd.DataFrame, *, output_dir: Path, use_dataframe_format: bool = False) -> Path:
         if use_dataframe_format:
@@ -696,7 +841,7 @@ class GenerateTrainData:
 
     @staticmethod
     def _normalize_timeframe(timeframe: str) -> str:
-        normalized = timeframe.strip().lower()
+        normalized = timeframe.strip()
         if normalized not in GenerateTrainData.TIMEFRAME_ALIASES:
             supported = ", ".join(sorted(GenerateTrainData.TIMEFRAME_ALIASES))
             raise ValueError(f"Unsupported timeframe '{timeframe}'. Supported values: {supported}.")
@@ -1023,3 +1168,41 @@ def write_int_example(vals):
 
 def write_str_example(vals):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=vals))
+
+
+def generate_multiple_train_data(
+    symbols: Sequence[tuple[str, str]] | str,
+    bucket: str | Sequence[tuple[str, str]] = "forexgrand-train",
+    source: Optional[str] = None,
+    sequence_length: Optional[int] = None,
+    stride: Optional[int] = None,
+    timeframe: str = "1m",
+    custom_data: Optional[dict[tuple[str, str] | str, pd.DataFrame]] = None,
+    return_dataframe: bool = False,
+    **kwargs: Any,
+) -> dict[str, np.ndarray] | tuple[dict[str, np.ndarray], pd.DataFrame]:
+    """Top-level helper to generate chronologically aligned multi-symbol training sequence data."""
+    if isinstance(symbols, str) and not isinstance(bucket, str):
+        bucket, symbols = symbols, bucket
+
+    if isinstance(source, int):
+        sequence_length, stride, source = source, sequence_length, None
+
+    bucket_name = str(bucket).strip() if bucket else "forexgrand-train"
+
+    generator = GenerateTrainData(
+        train_base_bucket=bucket_name,
+        **{k: v for k, v in kwargs.items() if k in {"chunk_size", "use_dataframe_format"}},
+    )
+    return generator.generate_multiple_train_data(
+        symbols=symbols,
+        bucket=bucket_name,
+        source=source,
+        sequence_length=sequence_length,
+        stride=stride,
+        timeframe=timeframe,
+        custom_data=custom_data,
+        return_dataframe=return_dataframe,
+    )
+
+
